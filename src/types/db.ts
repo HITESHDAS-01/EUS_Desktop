@@ -112,6 +112,12 @@ export type RepaymentInput = {
   payment_date: string;
 };
 
+export type RepaymentReportRow = RepaymentRow & {
+  member_code: string | null;
+  member_full_name: string | null;
+  member_photo_url: string | null;
+};
+
 export type DashboardAlertRow = {
   id: string;
   member_code: string | null;
@@ -152,4 +158,147 @@ export type StatementBundle = {
   savings: SavingsRow[];
   loans: LoanRow[];
   repayments: RepaymentRow[];
+};
+
+// =========================================================================
+// EMI
+// =========================================================================
+
+export type Vendor = {
+  id: string;
+  name: string;
+  address: string | null;
+  created_at: string;
+};
+
+export type VendorInput = { name: string; address: string | null };
+
+export type EmiCustomer = {
+  id: string;
+  customer_code: string | null;
+  full_name: string;
+  phone: string | null;
+  address: string | null;
+  father_husband_name: string | null;
+  date_of_birth: string | null;
+  aadhaar_vid: string | null;
+  pan_number: string | null;
+  occupation: string | null;
+  monthly_income: number | null;
+  nominee_name: string | null;
+  photo_url: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+export type EmiCustomerInput = Omit<EmiCustomer, 'id' | 'customer_code' | 'created_at'>;
+
+export type EmiLoanStatus = 'active' | 'closed' | 'defaulted' | 'foreclosed';
+
+export type EmiLoan = {
+  id: string;
+  loan_code: string | null;
+  customer_id: string;
+  vendor_id: string;
+  product_name: string;
+  product_category: string | null;
+  product_price: number;
+  downpayment: number;
+  financed_amount: number;
+  interest_rate: number;
+  tenure_months: number;
+  emi_amount: number;
+  total_payable: number;
+  total_interest: number;
+  vendor_paid_amount: number;
+  vendor_paid_date: string;
+  vendor_invoice_number: string | null;
+  disbursed_date: string;
+  first_emi_date: string;
+  remaining_principal: number;
+  status: EmiLoanStatus;
+  notes: string | null;
+  created_at: string;
+  customer_code: string | null;
+  customer_name: string | null;
+  vendor_name: string | null;
+};
+
+export type EmiLoanInput = {
+  customer_id: string;
+  vendor_id: string;
+  product_name: string;
+  product_category: string | null;
+  product_price: number;
+  downpayment: number;
+  interest_rate: number;
+  tenure_months: number;
+  disbursed_date: string;
+  first_emi_date: string;
+  vendor_invoice_number: string | null;
+  notes: string | null;
+};
+
+export type EmiLoanUpdate = { status: EmiLoanStatus; notes: string | null };
+
+export type EmiPayment = {
+  id: string;
+  loan_id: string;
+  amount_paid: number;
+  principal_portion: number;
+  interest_portion: number;
+  penalty_portion: number;
+  payment_date: string;
+  due_date: string;
+  month_year: string;
+  receipt_number: string;
+  payment_method: string | null;
+  notes: string | null;
+};
+
+export type EmiPaymentInput = Omit<EmiPayment, 'id' | 'receipt_number'>;
+
+export type EmiLoanBundle = {
+  loan: EmiLoan;
+  customer: EmiCustomer;
+  vendor: Vendor;
+  payments: EmiPayment[];
+};
+
+export type EmiOverdueRow = {
+  loan_id: string;
+  loan_code: string | null;
+  customer_name: string | null;
+  customer_code: string | null;
+  product_name: string;
+  emi_amount: number;
+  unpaid_count: number;
+  overdue_amount: number;
+  earliest_due_date: string;
+  days_overdue: number;
+};
+
+export type EmiPaymentRecent = {
+  id: string;
+  loan_id: string;
+  amount_paid: number;
+  payment_date: string;
+  receipt_number: string;
+  loan_code: string | null;
+  product_name: string | null;
+  customer_name: string | null;
+};
+
+export type EmiDashboardStats = {
+  total_disbursed: number;
+  outstanding: number;
+  total_collected: number;
+  active_count: number;
+  closed_count: number;
+  foreclosed_count: number;
+  defaulted_count: number;
+  expected_emi_this_month: number;
+  collected_this_month: number;
+  overdue: EmiOverdueRow[];
+  recent_payments: EmiPaymentRecent[];
 };

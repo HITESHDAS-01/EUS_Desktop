@@ -1383,3 +1383,1067 @@ impl From<zip::result::ZipError> for AppError {
         msg(format!("Zip error: {e}"))
     }
 }
+
+// ===========================================================================
+// Reports — helpers
+// ===========================================================================
+
+#[tauri::command]
+pub fn list_savings_in_range(
+    state: State<'_, AppState>,
+    start: String,
+    end: String,
+) -> AppResult<Vec<SavingsRow>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(&format!(
+        "{} WHERE s.payment_date >= ?1 AND s.payment_date <= ?2
+         ORDER BY s.payment_date DESC",
+        SAVINGS_SELECT_SQL
+    ))?;
+    let rows = stmt.query_map(params![start, end], row_to_savings)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+#[derive(Debug, Serialize)]
+pub struct RepaymentReportRow {
+    pub id: String,
+    pub loan_id: String,
+    pub amount_paid: f64,
+    pub principal_portion: f64,
+    pub interest_portion: f64,
+    pub payment_date: String,
+    pub receipt_number: String,
+    pub member_code: Option<String>,
+    pub member_full_name: Option<String>,
+    pub member_photo_url: Option<String>,
+}
+
+#[tauri::command]
+pub fn list_repayments_in_range(
+    state: State<'_, AppState>,
+    start: String,
+    end: String,
+) -> AppResult<Vec<RepaymentReportRow>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT r.id, r.loan_id, r.amount_paid, r.principal_portion, r.interest_portion,
+                r.payment_date, r.receipt_number,
+                m.member_code, p.full_name, p.photo_url
+         FROM loan_repayments r
+         LEFT JOIN loans l ON l.id = r.loan_id
+         LEFT JOIN members m ON m.id = l.member_id
+         LEFT JOIN profiles p ON p.id = m.id
+         WHERE r.payment_date >= ?1 AND r.payment_date <= ?2
+         ORDER BY r.payment_date DESC",
+    )?;
+    let rows = stmt.query_map(params![start, end], |r| {
+        Ok(RepaymentReportRow {
+            id: r.get(0)?,
+            loan_id: r.get(1)?,
+            amount_paid: r.get(2)?,
+            principal_portion: r.get(3)?,
+            interest_portion: r.get(4)?,
+            payment_date: r.get(5)?,
+            receipt_number: r.get(6)?,
+            member_code: r.get(7)?,
+            member_full_name: r.get(8)?,
+            member_photo_url: r.get(9)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+// ===========================================================================
+// EMI: Vendors
+// ===========================================================================
+
+#[derive(Debug, Serialize, Clone)]
+pub struct Vendor {
+    pub id: String,
+    pub name: String,
+    pub address: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VendorInput {
+    pub name: String,
+    pub address: Option<String>,
+}
+
+fn row_to_vendor(row: &Row<'_>) -> rusqlite::Result<Vendor> {
+    Ok(Vendor {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        address: row.get(2)?,
+        created_at: row.get(3)?,
+    })
+}
+
+#[tauri::command]
+pub fn list_vendors(state: State<'_, AppState>) -> AppResult<Vec<Vendor>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare("SELECT id, name, address, created_at FROM vendors ORDER BY name ASC")?;
+    let rows = stmt.query_map([], row_to_vendor)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+#[tauri::command]
+pub fn create_vendor(state: State<'_, AppState>, input: VendorInput) -> AppResult<Vendor> {
+    require_login(&state)?;
+    if input.name.trim().is_empty() {
+        return Err(msg("Vendor name is required"));
+    }
+    let id = Uuid::new_v4().to_string();
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "INSERT INTO vendors (id, name, address) VALUES (?1, ?2, ?3)",
+        params![id, input.name.trim(), empty_to_none(input.address)],
+    )?;
+    let mut stmt = conn.prepare("SELECT id, name, address, created_at FROM vendors WHERE id = ?1")?;
+    Ok(stmt.query_row(params![id], row_to_vendor)?)
+}
+
+#[tauri::command]
+pub fn update_vendor(
+    state: State<'_, AppState>,
+    id: String,
+    input: VendorInput,
+) -> AppResult<()> {
+    require_login(&state)?;
+    if input.name.trim().is_empty() {
+        return Err(msg("Vendor name is required"));
+    }
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "UPDATE vendors SET name = ?2, address = ?3, updated_at = datetime('now') WHERE id = ?1",
+        params![id, input.name.trim(), empty_to_none(input.address)],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_vendor(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    // Check FK
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM emi_loans WHERE vendor_id = ?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    if count > 0 {
+        return Err(msg(
+            "This vendor has loans linked to it. Delete or reassign those loans first.",
+        ));
+    }
+    conn.execute("DELETE FROM vendors WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+// ===========================================================================
+// EMI: Customers
+// ===========================================================================
+
+#[derive(Debug, Serialize, Clone)]
+pub struct EmiCustomer {
+    pub id: String,
+    pub customer_code: Option<String>,
+    pub full_name: String,
+    pub phone: Option<String>,
+    pub address: Option<String>,
+    pub father_husband_name: Option<String>,
+    pub date_of_birth: Option<String>,
+    pub aadhaar_vid: Option<String>,
+    pub pan_number: Option<String>,
+    pub occupation: Option<String>,
+    pub monthly_income: Option<f64>,
+    pub nominee_name: Option<String>,
+    pub photo_url: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmiCustomerInput {
+    pub full_name: String,
+    pub phone: Option<String>,
+    pub address: Option<String>,
+    pub father_husband_name: Option<String>,
+    pub date_of_birth: Option<String>,
+    pub aadhaar_vid: Option<String>,
+    pub pan_number: Option<String>,
+    pub occupation: Option<String>,
+    pub monthly_income: Option<f64>,
+    pub nominee_name: Option<String>,
+    pub photo_url: Option<String>,
+    pub notes: Option<String>,
+}
+
+const EMI_CUST_COLS: &str = "id, customer_code, full_name, phone, address, father_husband_name,
+        date_of_birth, aadhaar_vid, pan_number, occupation, monthly_income,
+        nominee_name, photo_url, notes, created_at";
+
+fn row_to_emi_customer(row: &Row<'_>) -> rusqlite::Result<EmiCustomer> {
+    Ok(EmiCustomer {
+        id: row.get(0)?,
+        customer_code: row.get(1)?,
+        full_name: row.get(2)?,
+        phone: row.get(3)?,
+        address: row.get(4)?,
+        father_husband_name: row.get(5)?,
+        date_of_birth: row.get(6)?,
+        aadhaar_vid: row.get(7)?,
+        pan_number: row.get(8)?,
+        occupation: row.get(9)?,
+        monthly_income: row.get(10)?,
+        nominee_name: row.get(11)?,
+        photo_url: row.get(12)?,
+        notes: row.get(13)?,
+        created_at: row.get(14)?,
+    })
+}
+
+#[tauri::command]
+pub fn list_emi_customers(state: State<'_, AppState>) -> AppResult<Vec<EmiCustomer>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM emi_customers ORDER BY created_at DESC",
+        EMI_CUST_COLS
+    ))?;
+    let rows = stmt.query_map([], row_to_emi_customer)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+#[tauri::command]
+pub fn get_emi_customer(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<Option<EmiCustomer>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM emi_customers WHERE id = ?1",
+        EMI_CUST_COLS
+    ))?;
+    Ok(stmt
+        .query_row(params![id], row_to_emi_customer)
+        .optional()?)
+}
+
+#[tauri::command]
+pub fn create_emi_customer(
+    state: State<'_, AppState>,
+    input: EmiCustomerInput,
+) -> AppResult<EmiCustomer> {
+    require_login(&state)?;
+    if input.full_name.trim().is_empty() {
+        return Err(msg("Customer name is required"));
+    }
+    let id = Uuid::new_v4().to_string();
+    {
+        let conn = state.db.lock().unwrap();
+        let code = db::generate_emi_customer_code(&conn)?;
+        conn.execute(
+            "INSERT INTO emi_customers (
+                id, customer_code, full_name, phone, address, father_husband_name,
+                date_of_birth, aadhaar_vid, pan_number, occupation, monthly_income,
+                nominee_name, photo_url, notes
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                id,
+                code,
+                input.full_name.trim(),
+                empty_to_none(input.phone.clone()),
+                empty_to_none(input.address.clone()),
+                empty_to_none(input.father_husband_name.clone()),
+                empty_to_none(input.date_of_birth.clone()),
+                empty_to_none(input.aadhaar_vid.clone()),
+                empty_to_none(input.pan_number.clone()),
+                empty_to_none(input.occupation.clone()),
+                input.monthly_income,
+                empty_to_none(input.nominee_name.clone()),
+                empty_to_none(input.photo_url.clone()),
+                empty_to_none(input.notes.clone()),
+            ],
+        )?;
+    }
+    get_emi_customer(state, id).and_then(|m| m.ok_or_else(|| msg("Failed to read created customer")))
+}
+
+#[tauri::command]
+pub fn update_emi_customer(
+    state: State<'_, AppState>,
+    id: String,
+    input: EmiCustomerInput,
+) -> AppResult<()> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "UPDATE emi_customers SET
+            full_name = ?2, phone = ?3, address = ?4, father_husband_name = ?5,
+            date_of_birth = ?6, aadhaar_vid = ?7, pan_number = ?8, occupation = ?9,
+            monthly_income = ?10, nominee_name = ?11, photo_url = ?12, notes = ?13,
+            updated_at = datetime('now')
+         WHERE id = ?1",
+        params![
+            id,
+            input.full_name.trim(),
+            empty_to_none(input.phone),
+            empty_to_none(input.address),
+            empty_to_none(input.father_husband_name),
+            empty_to_none(input.date_of_birth),
+            empty_to_none(input.aadhaar_vid),
+            empty_to_none(input.pan_number),
+            empty_to_none(input.occupation),
+            input.monthly_income,
+            empty_to_none(input.nominee_name),
+            empty_to_none(input.photo_url),
+            empty_to_none(input.notes),
+        ],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_emi_customer(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM emi_loans WHERE customer_id = ?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    if count > 0 {
+        return Err(msg(
+            "This customer has EMI loans. Delete or reassign those loans first.",
+        ));
+    }
+    conn.execute("DELETE FROM emi_customers WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn save_emi_customer_photo(
+    state: State<'_, AppState>,
+    photo: PhotoInput,
+) -> AppResult<String> {
+    require_login(&state)?;
+    let ext = photo.ext.trim_start_matches('.').to_lowercase();
+    let allowed = ["jpg", "jpeg", "png", "webp", "gif"];
+    if !allowed.contains(&ext.as_str()) {
+        return Err(msg("Unsupported image type."));
+    }
+    if photo.bytes.len() > 2 * 1024 * 1024 {
+        return Err(msg("Photo too large (max 2 MB)."));
+    }
+    let filename = format!("{}.{}", Uuid::new_v4(), ext);
+    let path = state.photos_dir.join(&filename);
+    std::fs::write(&path, &photo.bytes).map_err(AppError::from)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+// ===========================================================================
+// EMI: Loans
+// ===========================================================================
+
+#[derive(Debug, Serialize, Clone)]
+pub struct EmiLoan {
+    pub id: String,
+    pub loan_code: Option<String>,
+    pub customer_id: String,
+    pub vendor_id: String,
+    pub product_name: String,
+    pub product_category: Option<String>,
+    pub product_price: f64,
+    pub downpayment: f64,
+    pub financed_amount: f64,
+    pub interest_rate: f64,
+    pub tenure_months: i64,
+    pub emi_amount: f64,
+    pub total_payable: f64,
+    pub total_interest: f64,
+    pub vendor_paid_amount: f64,
+    pub vendor_paid_date: String,
+    pub vendor_invoice_number: Option<String>,
+    pub disbursed_date: String,
+    pub first_emi_date: String,
+    pub remaining_principal: f64,
+    pub status: String,
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub customer_code: Option<String>,
+    pub customer_name: Option<String>,
+    pub vendor_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmiLoanInput {
+    pub customer_id: String,
+    pub vendor_id: String,
+    pub product_name: String,
+    pub product_category: Option<String>,
+    pub product_price: f64,
+    pub downpayment: f64,
+    pub interest_rate: f64,
+    pub tenure_months: i64,
+    pub disbursed_date: String,
+    pub first_emi_date: String,
+    pub vendor_invoice_number: Option<String>,
+    pub notes: Option<String>,
+}
+
+const EMI_LOAN_SELECT_SQL: &str = "
+SELECT l.id, l.loan_code, l.customer_id, l.vendor_id, l.product_name, l.product_category,
+       l.product_price, l.downpayment, l.financed_amount, l.interest_rate, l.tenure_months,
+       l.emi_amount, l.total_payable, l.total_interest, l.vendor_paid_amount,
+       l.vendor_paid_date, l.vendor_invoice_number, l.disbursed_date, l.first_emi_date,
+       l.remaining_principal, l.status, l.notes, l.created_at,
+       c.customer_code, c.full_name, v.name
+FROM emi_loans l
+LEFT JOIN emi_customers c ON c.id = l.customer_id
+LEFT JOIN vendors v ON v.id = l.vendor_id
+";
+
+fn row_to_emi_loan(row: &Row<'_>) -> rusqlite::Result<EmiLoan> {
+    Ok(EmiLoan {
+        id: row.get(0)?,
+        loan_code: row.get(1)?,
+        customer_id: row.get(2)?,
+        vendor_id: row.get(3)?,
+        product_name: row.get(4)?,
+        product_category: row.get(5)?,
+        product_price: row.get(6)?,
+        downpayment: row.get(7)?,
+        financed_amount: row.get(8)?,
+        interest_rate: row.get(9)?,
+        tenure_months: row.get(10)?,
+        emi_amount: row.get(11)?,
+        total_payable: row.get(12)?,
+        total_interest: row.get(13)?,
+        vendor_paid_amount: row.get(14)?,
+        vendor_paid_date: row.get(15)?,
+        vendor_invoice_number: row.get(16)?,
+        disbursed_date: row.get(17)?,
+        first_emi_date: row.get(18)?,
+        remaining_principal: row.get(19)?,
+        status: row.get(20)?,
+        notes: row.get(21)?,
+        created_at: row.get(22)?,
+        customer_code: row.get(23)?,
+        customer_name: row.get(24)?,
+        vendor_name: row.get(25)?,
+    })
+}
+
+fn round2(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
+}
+
+#[tauri::command]
+pub fn list_emi_loans(state: State<'_, AppState>) -> AppResult<Vec<EmiLoan>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(&format!(
+        "{} ORDER BY l.created_at DESC",
+        EMI_LOAN_SELECT_SQL
+    ))?;
+    let rows = stmt.query_map([], row_to_emi_loan)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+#[tauri::command]
+pub fn get_emi_loan(state: State<'_, AppState>, id: String) -> AppResult<Option<EmiLoan>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(&format!("{} WHERE l.id = ?1", EMI_LOAN_SELECT_SQL))?;
+    Ok(stmt.query_row(params![id], row_to_emi_loan).optional()?)
+}
+
+#[tauri::command]
+pub fn create_emi_loan(state: State<'_, AppState>, input: EmiLoanInput) -> AppResult<EmiLoan> {
+    require_login(&state)?;
+    if input.product_name.trim().is_empty() {
+        return Err(msg("Product name is required"));
+    }
+    if input.product_price <= 0.0 {
+        return Err(msg("Product price must be greater than 0"));
+    }
+    if input.downpayment < 0.0 || input.downpayment > input.product_price {
+        return Err(msg("Downpayment must be between 0 and product price"));
+    }
+    if input.tenure_months <= 0 {
+        return Err(msg("Tenure must be at least 1 month"));
+    }
+    let financed = input.product_price - input.downpayment;
+    if financed <= 0.0 {
+        return Err(msg("Financed amount must be greater than 0"));
+    }
+    let total_interest = (financed * input.interest_rate * (input.tenure_months as f64)) / (12.0 * 100.0);
+    let total_payable = financed + total_interest;
+    let emi = total_payable / (input.tenure_months as f64);
+
+    let id = Uuid::new_v4().to_string();
+    {
+        let conn = state.db.lock().unwrap();
+        let code = db::generate_emi_loan_code(&conn, &input.disbursed_date)?;
+        conn.execute(
+            "INSERT INTO emi_loans (
+                id, loan_code, customer_id, vendor_id, product_name, product_category,
+                product_price, downpayment, financed_amount, interest_rate, tenure_months,
+                emi_amount, total_payable, total_interest, vendor_paid_amount,
+                vendor_paid_date, vendor_invoice_number, disbursed_date, first_emi_date,
+                remaining_principal, status, notes
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?9,
+                       ?15, ?16, ?15, ?17, ?9, 'active', ?18)",
+            params![
+                id,
+                code,
+                input.customer_id,
+                input.vendor_id,
+                input.product_name.trim(),
+                empty_to_none(input.product_category.clone()),
+                round2(input.product_price),
+                round2(input.downpayment),
+                round2(financed),
+                input.interest_rate,
+                input.tenure_months,
+                round2(emi),
+                round2(total_payable),
+                round2(total_interest),
+                input.disbursed_date,
+                empty_to_none(input.vendor_invoice_number.clone()),
+                input.first_emi_date,
+                empty_to_none(input.notes.clone()),
+            ],
+        )?;
+    }
+    get_emi_loan(state, id).and_then(|m| m.ok_or_else(|| msg("Failed to read created loan")))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmiLoanUpdateInput {
+    pub status: String,
+    pub notes: Option<String>,
+}
+
+#[tauri::command]
+pub fn update_emi_loan(
+    state: State<'_, AppState>,
+    id: String,
+    input: EmiLoanUpdateInput,
+) -> AppResult<()> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "UPDATE emi_loans SET status = ?2, notes = ?3, updated_at = datetime('now') WHERE id = ?1",
+        params![id, input.status, empty_to_none(input.notes)],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_emi_loan(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    conn.execute("DELETE FROM emi_loans WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+// ===========================================================================
+// EMI: Payments
+// ===========================================================================
+
+#[derive(Debug, Serialize, Clone)]
+pub struct EmiPayment {
+    pub id: String,
+    pub loan_id: String,
+    pub amount_paid: f64,
+    pub principal_portion: f64,
+    pub interest_portion: f64,
+    pub penalty_portion: f64,
+    pub payment_date: String,
+    pub due_date: String,
+    pub month_year: String,
+    pub receipt_number: String,
+    pub payment_method: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmiPaymentInput {
+    pub loan_id: String,
+    pub amount_paid: f64,
+    pub principal_portion: f64,
+    pub interest_portion: f64,
+    pub penalty_portion: f64,
+    pub payment_date: String,
+    pub due_date: String,
+    pub month_year: String,
+    pub payment_method: Option<String>,
+    pub notes: Option<String>,
+}
+
+fn row_to_emi_payment(row: &Row<'_>) -> rusqlite::Result<EmiPayment> {
+    Ok(EmiPayment {
+        id: row.get(0)?,
+        loan_id: row.get(1)?,
+        amount_paid: row.get(2)?,
+        principal_portion: row.get(3)?,
+        interest_portion: row.get(4)?,
+        penalty_portion: row.get(5)?,
+        payment_date: row.get(6)?,
+        due_date: row.get(7)?,
+        month_year: row.get(8)?,
+        receipt_number: row.get(9)?,
+        payment_method: row.get(10)?,
+        notes: row.get(11)?,
+    })
+}
+
+const EMI_PAYMENT_COLS: &str = "id, loan_id, amount_paid, principal_portion, interest_portion,
+        penalty_portion, payment_date, due_date, month_year, receipt_number,
+        payment_method, notes";
+
+#[tauri::command]
+pub fn list_emi_payments(state: State<'_, AppState>) -> AppResult<Vec<EmiPayment>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM emi_payments ORDER BY payment_date DESC LIMIT 500",
+        EMI_PAYMENT_COLS
+    ))?;
+    let rows = stmt.query_map([], row_to_emi_payment)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+#[tauri::command]
+pub fn list_emi_payments_for_loan(
+    state: State<'_, AppState>,
+    loan_id: String,
+) -> AppResult<Vec<EmiPayment>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM emi_payments WHERE loan_id = ?1 ORDER BY payment_date ASC",
+        EMI_PAYMENT_COLS
+    ))?;
+    let rows = stmt.query_map(params![loan_id], row_to_emi_payment)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+/// Atomic EMI payment — insert + update outstanding + auto-close at 0.
+#[tauri::command]
+pub fn record_emi_payment(
+    state: State<'_, AppState>,
+    input: EmiPaymentInput,
+) -> AppResult<EmiPayment> {
+    require_login(&state)?;
+    if input.amount_paid <= 0.0 {
+        return Err(msg("Payment amount must be greater than 0."));
+    }
+    if input.principal_portion < 0.0 || input.interest_portion < 0.0 || input.penalty_portion < 0.0 {
+        return Err(msg("Portions cannot be negative."));
+    }
+
+    let receipt = format!("EMI-{}-{}", now_compact(), random_suffix());
+    let id = Uuid::new_v4().to_string();
+
+    let mut conn = state.db.lock().unwrap();
+    let tx = conn.transaction()?;
+    let remaining: f64 = tx.query_row(
+        "SELECT remaining_principal FROM emi_loans WHERE id = ?1",
+        params![input.loan_id],
+        |r| r.get(0),
+    )?;
+    if input.principal_portion > remaining + 0.005 {
+        return Err(msg(format!(
+            "Principal portion ({:.2}) exceeds outstanding balance ({:.2}).",
+            input.principal_portion, remaining
+        )));
+    }
+    let new_rem = (remaining - input.principal_portion).max(0.0);
+    let new_status = if new_rem <= 0.0 { "closed" } else { "active" };
+
+    tx.execute(
+        "INSERT INTO emi_payments
+          (id, loan_id, amount_paid, principal_portion, interest_portion, penalty_portion,
+           payment_date, due_date, month_year, receipt_number, payment_method, notes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            id,
+            input.loan_id,
+            input.amount_paid,
+            input.principal_portion,
+            input.interest_portion,
+            input.penalty_portion,
+            input.payment_date,
+            input.due_date,
+            input.month_year,
+            receipt,
+            empty_to_none(input.payment_method.clone()),
+            empty_to_none(input.notes.clone()),
+        ],
+    )?;
+
+    tx.execute(
+        "UPDATE emi_loans SET remaining_principal = ?1, status = ?2, updated_at = datetime('now')
+         WHERE id = ?3",
+        params![new_rem, new_status, input.loan_id],
+    )?;
+    tx.commit()?;
+    drop(conn);
+
+    Ok(EmiPayment {
+        id,
+        loan_id: input.loan_id,
+        amount_paid: input.amount_paid,
+        principal_portion: input.principal_portion,
+        interest_portion: input.interest_portion,
+        penalty_portion: input.penalty_portion,
+        payment_date: input.payment_date,
+        due_date: input.due_date,
+        month_year: input.month_year,
+        receipt_number: receipt,
+        payment_method: input.payment_method,
+        notes: input.notes,
+    })
+}
+
+#[tauri::command]
+pub fn delete_emi_payment(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    require_login(&state)?;
+    let mut conn = state.db.lock().unwrap();
+    let tx = conn.transaction()?;
+    // Reverse the principal portion onto the loan.
+    let row: Option<(String, f64)> = tx
+        .query_row(
+            "SELECT loan_id, principal_portion FROM emi_payments WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)),
+        )
+        .optional()?;
+    let Some((loan_id, principal_back)) = row else {
+        return Err(msg("Payment not found"));
+    };
+    tx.execute("DELETE FROM emi_payments WHERE id = ?1", params![id])?;
+    tx.execute(
+        "UPDATE emi_loans
+         SET remaining_principal = remaining_principal + ?1,
+             status = CASE WHEN remaining_principal + ?1 > 0 THEN 'active' ELSE status END,
+             updated_at = datetime('now')
+         WHERE id = ?2",
+        params![principal_back, loan_id],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+// ===========================================================================
+// EMI: Loan bundle (for profile page)
+// ===========================================================================
+
+#[derive(Debug, Serialize)]
+pub struct EmiLoanBundle {
+    pub loan: EmiLoan,
+    pub customer: EmiCustomer,
+    pub vendor: Vendor,
+    pub payments: Vec<EmiPayment>,
+}
+
+#[tauri::command]
+pub fn get_emi_loan_bundle(
+    state: State<'_, AppState>,
+    loan_id: String,
+) -> AppResult<EmiLoanBundle> {
+    require_login(&state)?;
+    let loan = {
+        let conn = state.db.lock().unwrap();
+        let mut stmt = conn.prepare(&format!("{} WHERE l.id = ?1", EMI_LOAN_SELECT_SQL))?;
+        stmt.query_row(params![loan_id], row_to_emi_loan).optional()?
+    };
+    let Some(loan) = loan else {
+        return Err(msg("Loan not found"));
+    };
+    let customer = {
+        let conn = state.db.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM emi_customers WHERE id = ?1",
+            EMI_CUST_COLS
+        ))?;
+        stmt.query_row(params![loan.customer_id], row_to_emi_customer)?
+    };
+    let vendor = {
+        let conn = state.db.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, name, address, created_at FROM vendors WHERE id = ?1")?;
+        stmt.query_row(params![loan.vendor_id], row_to_vendor)?
+    };
+    let payments = {
+        let conn = state.db.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM emi_payments WHERE loan_id = ?1 ORDER BY payment_date ASC",
+            EMI_PAYMENT_COLS
+        ))?;
+        let rows = stmt.query_map(params![loan_id], row_to_emi_payment)?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    Ok(EmiLoanBundle {
+        loan,
+        customer,
+        vendor,
+        payments,
+    })
+}
+
+// ===========================================================================
+// EMI: Dashboard stats
+// ===========================================================================
+
+#[derive(Debug, Serialize)]
+pub struct EmiDashboardStats {
+    pub total_disbursed: f64,
+    pub outstanding: f64,
+    pub total_collected: f64,
+    pub active_count: i64,
+    pub closed_count: i64,
+    pub foreclosed_count: i64,
+    pub defaulted_count: i64,
+    pub expected_emi_this_month: f64,
+    pub collected_this_month: f64,
+    pub overdue: Vec<EmiOverdueRow>,
+    pub recent_payments: Vec<EmiPaymentRecent>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EmiOverdueRow {
+    pub loan_id: String,
+    pub loan_code: Option<String>,
+    pub customer_name: Option<String>,
+    pub customer_code: Option<String>,
+    pub product_name: String,
+    pub emi_amount: f64,
+    pub unpaid_count: i64,
+    pub overdue_amount: f64,
+    pub earliest_due_date: String,
+    pub days_overdue: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EmiPaymentRecent {
+    pub id: String,
+    pub loan_id: String,
+    pub amount_paid: f64,
+    pub payment_date: String,
+    pub receipt_number: String,
+    pub loan_code: Option<String>,
+    pub product_name: Option<String>,
+    pub customer_name: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_emi_dashboard_stats(state: State<'_, AppState>) -> AppResult<EmiDashboardStats> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+
+    let total_disbursed: f64 = conn
+        .query_row("SELECT COALESCE(SUM(vendor_paid_amount), 0) FROM emi_loans", [], |r| {
+            r.get(0)
+        })
+        .unwrap_or(0.0);
+    let outstanding: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(remaining_principal), 0) FROM emi_loans WHERE status = 'active'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0.0);
+    let total_collected: f64 = conn
+        .query_row("SELECT COALESCE(SUM(amount_paid), 0) FROM emi_payments", [], |r| {
+            r.get(0)
+        })
+        .unwrap_or(0.0);
+
+    let counts = |status: &str| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM emi_loans WHERE status = ?1",
+            params![status],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+    };
+    let active_count = counts("active");
+    let closed_count = counts("closed");
+    let foreclosed_count = counts("foreclosed");
+    let defaulted_count = counts("defaulted");
+
+    let today = chrono::Local::now().date_naive();
+    let month_start = format!("{:04}-{:02}-01", today.year(), today.month());
+    let month_end = {
+        let (y, m) = if today.month() == 12 {
+            (today.year() + 1, 1)
+        } else {
+            (today.year(), today.month() + 1)
+        };
+        let first_next =
+            chrono::NaiveDate::from_ymd_opt(y, m, 1).unwrap_or(today);
+        let last_day = first_next.pred_opt().unwrap_or(today);
+        last_day.format("%Y-%m-%d").to_string()
+    };
+
+    let collected_this_month: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(amount_paid), 0) FROM emi_payments
+             WHERE payment_date >= ?1 AND payment_date <= ?2",
+            params![month_start, month_end],
+            |r| r.get(0),
+        )
+        .unwrap_or(0.0);
+
+    // Walk active loans to compute expected EMI count this month + overdue.
+    let mut stmt = conn.prepare(
+        "SELECT l.id, l.loan_code, c.full_name, c.customer_code,
+                l.product_name, l.emi_amount, l.tenure_months, l.first_emi_date
+         FROM emi_loans l
+         LEFT JOIN emi_customers c ON c.id = l.customer_id
+         WHERE l.status = 'active'",
+    )?;
+    let loan_rows: Vec<(
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+        f64,
+        i64,
+        String,
+    )> = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+                r.get(7)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    let grace: i64 = get_setting_i64(&conn, "grace_period_days", 3);
+
+    let mut expected_emi_this_month = 0.0;
+    let mut overdue: Vec<EmiOverdueRow> = Vec::new();
+    let month_start_d = chrono::NaiveDate::parse_from_str(&month_start, "%Y-%m-%d").ok();
+    let month_end_d = chrono::NaiveDate::parse_from_str(&month_end, "%Y-%m-%d").ok();
+
+    for (loan_id, loan_code, cust_name, cust_code, product_name, emi_amount, tenure, first_emi) in
+        loan_rows
+    {
+        let first = match chrono::NaiveDate::parse_from_str(&first_emi, "%Y-%m-%d") {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        // List of paid month_years for this loan
+        let mut paid_months_stmt =
+            conn.prepare("SELECT substr(due_date, 1, 7) FROM emi_payments WHERE loan_id = ?1")?;
+        let paid_months: std::collections::HashSet<String> = paid_months_stmt
+            .query_map(params![loan_id], |r| r.get::<_, String>(0))?
+            .filter_map(Result::ok)
+            .collect();
+        drop(paid_months_stmt);
+
+        let mut unpaid_due_dates: Vec<chrono::NaiveDate> = Vec::new();
+        for i in 0..tenure {
+            let due = add_months_naive(first, i);
+            let due_key = due.format("%Y-%m").to_string();
+            if let (Some(ms), Some(me)) = (month_start_d, month_end_d) {
+                if due >= ms && due <= me {
+                    expected_emi_this_month += emi_amount;
+                }
+            }
+            if !paid_months.contains(&due_key) {
+                let graced = due + chrono::Duration::days(grace);
+                if today > graced {
+                    unpaid_due_dates.push(due);
+                }
+            }
+        }
+
+        if !unpaid_due_dates.is_empty() {
+            let earliest = *unpaid_due_dates.first().unwrap();
+            let days = (today - earliest).num_days();
+            overdue.push(EmiOverdueRow {
+                loan_id,
+                loan_code,
+                customer_name: cust_name,
+                customer_code: cust_code,
+                product_name,
+                emi_amount,
+                unpaid_count: unpaid_due_dates.len() as i64,
+                overdue_amount: emi_amount * (unpaid_due_dates.len() as f64),
+                earliest_due_date: earliest.format("%Y-%m-%d").to_string(),
+                days_overdue: days,
+            });
+        }
+    }
+    overdue.sort_by(|a, b| b.days_overdue.cmp(&a.days_overdue));
+
+    // Recent payments
+    let mut recent_stmt = conn.prepare(
+        "SELECT p.id, p.loan_id, p.amount_paid, p.payment_date, p.receipt_number,
+                l.loan_code, l.product_name, c.full_name
+         FROM emi_payments p
+         LEFT JOIN emi_loans l ON l.id = p.loan_id
+         LEFT JOIN emi_customers c ON c.id = l.customer_id
+         ORDER BY p.payment_date DESC LIMIT 10",
+    )?;
+    let recent_payments: Vec<EmiPaymentRecent> = recent_stmt
+        .query_map([], |r| {
+            Ok(EmiPaymentRecent {
+                id: r.get(0)?,
+                loan_id: r.get(1)?,
+                amount_paid: r.get(2)?,
+                payment_date: r.get(3)?,
+                receipt_number: r.get(4)?,
+                loan_code: r.get(5)?,
+                product_name: r.get(6)?,
+                customer_name: r.get(7)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(EmiDashboardStats {
+        total_disbursed,
+        outstanding,
+        total_collected,
+        active_count,
+        closed_count,
+        foreclosed_count,
+        defaulted_count,
+        expected_emi_this_month,
+        collected_this_month,
+        overdue,
+        recent_payments,
+    })
+}
+
+fn add_months_naive(d: chrono::NaiveDate, months: i64) -> chrono::NaiveDate {
+    let mut y = d.year();
+    let mut m = d.month() as i64 + months;
+    while m > 12 {
+        m -= 12;
+        y += 1;
+    }
+    while m < 1 {
+        m += 12;
+        y -= 1;
+    }
+    chrono::NaiveDate::from_ymd_opt(y, m as u32, d.day().min(28)).unwrap_or(d)
+}

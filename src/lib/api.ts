@@ -2,16 +2,28 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import type {
   AdminProfile,
   DashboardStats,
+  EmiCustomer,
+  EmiCustomerInput,
+  EmiDashboardStats,
+  EmiLoan,
+  EmiLoanBundle,
+  EmiLoanInput,
+  EmiLoanUpdate,
+  EmiPayment,
+  EmiPaymentInput,
   LoanInput,
   LoanRow,
   MemberInput,
   MemberRow,
   RepaymentInput,
+  RepaymentReportRow,
   RepaymentRow,
   SavingsInput,
   SavingsRow,
   SavingsUpdate,
   StatementBundle,
+  Vendor,
+  VendorInput,
 } from '@/types/db';
 
 export const api = {
@@ -65,7 +77,7 @@ export const api = {
     invoke<void>('update_savings', { id, input }),
   deleteSavings: (id: string) => invoke<void>('delete_savings', { id }),
 
-  // ---------- loans ----------
+  // ---------- member loans ----------
   listActiveLoans: () => invoke<LoanRow[]>('list_active_loans'),
   listMemberLoans: (memberId: string) =>
     invoke<LoanRow[]>('list_member_loans', { memberId }),
@@ -85,12 +97,63 @@ export const api = {
   // ---------- backup ----------
   exportBackupZip: (destPath: string) =>
     invoke<string>('export_backup_zip', { destPath }),
+
+  // ---------- reports ----------
+  listSavingsInRange: (start: string, end: string) =>
+    invoke<SavingsRow[]>('list_savings_in_range', { start, end }),
+  listRepaymentsInRange: (start: string, end: string) =>
+    invoke<RepaymentReportRow[]>('list_repayments_in_range', { start, end }),
+
+  // ---------- EMI: vendors ----------
+  listVendors: () => invoke<Vendor[]>('list_vendors'),
+  createVendor: (input: VendorInput) => invoke<Vendor>('create_vendor', { input }),
+  updateVendor: (id: string, input: VendorInput) =>
+    invoke<void>('update_vendor', { id, input }),
+  deleteVendor: (id: string) => invoke<void>('delete_vendor', { id }),
+
+  // ---------- EMI: customers ----------
+  listEmiCustomers: () => invoke<EmiCustomer[]>('list_emi_customers'),
+  getEmiCustomer: (id: string) =>
+    invoke<EmiCustomer | null>('get_emi_customer', { id }),
+  createEmiCustomer: (input: EmiCustomerInput) =>
+    invoke<EmiCustomer>('create_emi_customer', { input }),
+  updateEmiCustomer: (id: string, input: EmiCustomerInput) =>
+    invoke<void>('update_emi_customer', { id, input }),
+  deleteEmiCustomer: (id: string) =>
+    invoke<void>('delete_emi_customer', { id }),
+  saveEmiCustomerPhoto: async (file: File): Promise<string> => {
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const buf = new Uint8Array(await file.arrayBuffer());
+    return invoke<string>('save_emi_customer_photo', {
+      photo: { bytes: Array.from(buf), ext },
+    });
+  },
+
+  // ---------- EMI: loans ----------
+  listEmiLoans: () => invoke<EmiLoan[]>('list_emi_loans'),
+  getEmiLoan: (id: string) => invoke<EmiLoan | null>('get_emi_loan', { id }),
+  createEmiLoan: (input: EmiLoanInput) =>
+    invoke<EmiLoan>('create_emi_loan', { input }),
+  updateEmiLoan: (id: string, input: EmiLoanUpdate) =>
+    invoke<void>('update_emi_loan', { id, input }),
+  deleteEmiLoan: (id: string) => invoke<void>('delete_emi_loan', { id }),
+
+  // ---------- EMI: payments ----------
+  listEmiPayments: () => invoke<EmiPayment[]>('list_emi_payments'),
+  listEmiPaymentsForLoan: (loanId: string) =>
+    invoke<EmiPayment[]>('list_emi_payments_for_loan', { loanId }),
+  recordEmiPayment: (input: EmiPaymentInput) =>
+    invoke<EmiPayment>('record_emi_payment', { input }),
+  deleteEmiPayment: (id: string) =>
+    invoke<void>('delete_emi_payment', { id }),
+
+  // ---------- EMI: bundle + dashboard ----------
+  getEmiLoanBundle: (loanId: string) =>
+    invoke<EmiLoanBundle>('get_emi_loan_bundle', { loanId }),
+  getEmiDashboardStats: () =>
+    invoke<EmiDashboardStats>('get_emi_dashboard_stats'),
 };
 
-/**
- * Convert a stored absolute photo path into a src URL the webview can load.
- * Empty / null inputs pass through.
- */
 export function photoSrc(path: string | null | undefined): string {
   if (!path) return '';
   if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')) {

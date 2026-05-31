@@ -4,13 +4,13 @@ import { useAuth } from '@/lib/AuthContext';
 import { useSettings } from '@/lib/SettingsContext';
 import { api } from '@/lib/api';
 
-const navItems = [
+const navItems: { path: string; label: string; icon: string; exact?: boolean; disabled?: boolean }[] = [
   { path: '/admin', label: 'Dashboard', icon: 'fas fa-home', exact: true },
   { path: '/admin/members', label: 'Members', icon: 'fas fa-users' },
   { path: '/admin/transactions', label: 'Transactions', icon: 'fas fa-rupee-sign' },
   { path: '/admin/loans', label: 'Loans', icon: 'fas fa-hand-holding-usd' },
-  { path: '/admin/reports', label: 'Reports', icon: 'fas fa-chart-bar', disabled: true },
-  { path: '/admin/emi', label: 'Product EMI', icon: 'fas fa-mobile-alt', disabled: true },
+  { path: '/admin/emi', label: 'Product EMI', icon: 'fas fa-mobile-alt' },
+  { path: '/admin/reports', label: 'Reports', icon: 'fas fa-chart-bar' },
   { path: '/admin/settings', label: 'Settings', icon: 'fas fa-cog' },
 ];
 
