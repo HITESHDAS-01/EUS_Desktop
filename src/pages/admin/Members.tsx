@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { Button, Input, Label } from '@/components/ui/basic';
 import { api, photoSrc } from '@/lib/api';
 import type { MemberInput, MemberRow } from '@/types/db';
+import StatementModal from '@/components/admin/StatementModal';
 
 type SortKey = 'join_desc' | 'join_asc' | 'name_asc' | 'name_desc' | 'code_asc' | 'code_desc';
 
 export default function Members() {
+  const navigate = useNavigate();
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -26,6 +29,7 @@ export default function Members() {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [sortBy, setSortBy] = useState<SortKey>('join_desc');
+  const [statementMemberId, setStatementMemberId] = useState<string | null>(null);
 
   // form state
   const [fullName, setFullName] = useState('');
@@ -65,31 +69,16 @@ export default function Members() {
   };
 
   const resetForm = () => {
-    setFullName('');
-    setPhone('');
-    setPhotoUrl('');
-    setPhotoFile(null);
-    setMemberCode('');
-    setJoinDate(format(new Date(), 'yyyy-MM-dd'));
-    setCategory('C');
-    setInitialInvestment('');
-    setTerm('24');
-    setMonthlyInstallment('100');
-    setStatus('active');
+    setFullName(''); setPhone(''); setPhotoUrl(''); setPhotoFile(null);
+    setMemberCode(''); setJoinDate(format(new Date(), 'yyyy-MM-dd'));
+    setCategory('C'); setInitialInvestment(''); setTerm('24');
+    setMonthlyInstallment('100'); setStatus('active');
     setError('');
-    setAddress('');
-    setFatherHusbandName('');
-    setGender('');
-    setDateOfBirth('');
-    setAadhaarVid('');
-    setNomineeName('');
+    setAddress(''); setFatherHusbandName(''); setGender('');
+    setDateOfBirth(''); setAadhaarVid(''); setNomineeName('');
   };
 
-  const openAdd = () => {
-    resetForm();
-    setEditingId(null);
-    setIsAddOpen(true);
-  };
+  const openAdd = () => { resetForm(); setEditingId(null); setIsAddOpen(true); };
 
   const openEdit = (m: MemberRow) => {
     const p = m.profiles;
@@ -116,9 +105,7 @@ export default function Members() {
 
   const buildInput = async (): Promise<MemberInput> => {
     let finalPhoto = photoUrl;
-    if (photoFile) {
-      finalPhoto = await api.saveMemberPhoto(photoFile);
-    }
+    if (photoFile) finalPhoto = await api.saveMemberPhoto(photoFile);
     return {
       member_code: memberCode.trim() || null,
       full_name: fullName,
@@ -137,6 +124,7 @@ export default function Members() {
       monthly_installment:
         category === 'A' ? 1000 : category === 'C' ? Number(monthlyInstallment || 0) : null,
       chosen_term_months: category === 'B' ? 36 : Number(term || 0),
+      loan_interest_rate: null,
     };
   };
 
@@ -163,10 +151,7 @@ export default function Members() {
     }
   };
 
-  const confirmDelete = (id: string) => {
-    setDeleteError('');
-    setMemberToDelete(id);
-  };
+  const confirmDelete = (id: string) => { setDeleteError(''); setMemberToDelete(id); };
 
   const handleDelete = async () => {
     if (!memberToDelete) return;
@@ -175,9 +160,7 @@ export default function Members() {
       setMemberToDelete(null);
       setSelectedIds((prev) => {
         if (!prev.has(memberToDelete)) return prev;
-        const next = new Set(prev);
-        next.delete(memberToDelete);
-        return next;
+        const next = new Set(prev); next.delete(memberToDelete); return next;
       });
       await fetchMembers();
     } catch (err) {
@@ -188,16 +171,14 @@ export default function Members() {
   const toggleSelectOne = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
 
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
-    setBulkDeleting(true);
-    setBulkError('');
+    setBulkDeleting(true); setBulkError('');
     try {
       const ids = Array.from(selectedIds);
       await api.bulkDeleteMembers(ids);
@@ -214,9 +195,10 @@ export default function Members() {
 
   const filtered = members
     .filter((m) => {
+      const q = searchQuery.toLowerCase();
       const matchesSearch =
-        (m.profiles?.full_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (m.member_code || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (m.profiles?.full_name || '').toLowerCase().includes(q) ||
+        (m.member_code || '').toLowerCase().includes(q) ||
         (m.profiles?.phone || '').includes(searchQuery);
       const matchesCategory = categoryFilter === 'All' || m.category === categoryFilter;
       return matchesSearch && matchesCategory;
@@ -224,10 +206,8 @@ export default function Members() {
     .sort((a, b) => {
       const nA = (a.profiles?.full_name || '').toLowerCase();
       const nB = (b.profiles?.full_name || '').toLowerCase();
-      const cA = a.member_code || '';
-      const cB = b.member_code || '';
-      const dA = a.join_date || '';
-      const dB = b.join_date || '';
+      const cA = a.member_code || ''; const cB = b.member_code || '';
+      const dA = a.join_date || '';   const dB = b.join_date || '';
       switch (sortBy) {
         case 'name_asc': return nA.localeCompare(nB);
         case 'name_desc': return nB.localeCompare(nA);
@@ -243,11 +223,9 @@ export default function Members() {
     <div className="p-6 space-y-6">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
         <h2 className="text-2xl font-bold text-gray-800">Members Directory</h2>
-        <div className="flex gap-3">
-          <Button onClick={openAdd} className="gap-2">
-            <i className="fas fa-user-plus"></i> Add New Member
-          </Button>
-        </div>
+        <Button onClick={openAdd} className="gap-2">
+          <i className="fas fa-user-plus"></i> Add New Member
+        </Button>
       </div>
 
       {success && (
@@ -304,9 +282,7 @@ export default function Members() {
             <span><strong>{selectedIds.size}</strong> member{selectedIds.size === 1 ? '' : 's'} selected</span>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setSelectedIds(new Set())}>
-              Clear
-            </Button>
+            <Button variant="outline" onClick={() => setSelectedIds(new Set())}>Clear</Button>
             <Button
               onClick={() => { setBulkError(''); setIsBulkOpen(true); }}
               className="bg-red-600 hover:bg-red-700 text-white"
@@ -360,8 +336,12 @@ export default function Members() {
                 filtered.map((m) => {
                   const isSelected = selectedIds.has(m.id);
                   return (
-                    <tr key={m.id} className={`transition-colors ${isSelected ? 'bg-amber-50/60' : 'hover:bg-gray-50'}`}>
-                      <td className="p-4 w-10">
+                    <tr
+                      key={m.id}
+                      className={`transition-colors cursor-pointer ${isSelected ? 'bg-amber-50/60 hover:bg-amber-50' : 'hover:bg-gray-50'}`}
+                      onClick={() => navigate(`/admin/members/${m.id}`)}
+                    >
+                      <td className="p-4 w-10" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           className="w-4 h-4 cursor-pointer accent-[#1e5a48]"
@@ -398,7 +378,10 @@ export default function Members() {
                           {m.status.toUpperCase()}
                         </span>
                       </td>
-                      <td className="p-4 text-right space-x-3">
+                      <td className="p-4 text-right space-x-3" onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => setStatementMemberId(m.id)} className="text-[#1e5a48] hover:text-[#154033]" title="Print Statement">
+                          <i className="fas fa-print"></i>
+                        </button>
                         <button onClick={() => openEdit(m)} className="text-[#f7b05e] hover:text-[#e09d3e]" title="Edit">
                           <i className="fas fa-edit"></i>
                         </button>
@@ -451,13 +434,7 @@ export default function Members() {
               <textarea value={address} onChange={(e) => setAddress(e.target.value)} rows={2} className="flex w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm resize-none" />
             </Field>
             <Field label="Aadhaar / VID No. (Optional)">
-              <Input
-                value={aadhaarVid}
-                onChange={(e) => setAadhaarVid(e.target.value.replace(/[\s-]/g, ''))}
-                pattern="[0-9]{12}"
-                maxLength={12}
-                placeholder="12-digit Aadhaar / VID"
-              />
+              <Input value={aadhaarVid} onChange={(e) => setAadhaarVid(e.target.value.replace(/[\s-]/g, ''))} pattern="[0-9]{12}" maxLength={12} placeholder="12-digit Aadhaar / VID" />
             </Field>
             <Field label="Nominee Name (Optional)">
               <Input value={nomineeName} onChange={(e) => setNomineeName(e.target.value)} />
@@ -566,6 +543,10 @@ export default function Members() {
           </div>
         </Modal>
       )}
+
+      {statementMemberId && (
+        <StatementModal memberId={statementMemberId} onClose={() => setStatementMemberId(null)} />
+      )}
     </div>
   );
 }
@@ -579,17 +560,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function Modal({
-  title,
-  tone,
-  children,
-  onClose,
-}: {
-  title: string;
-  tone?: 'danger';
-  children: React.ReactNode;
-  onClose: () => void;
-}) {
+function Modal({ title, tone, children, onClose }: { title: string; tone?: 'danger'; children: React.ReactNode; onClose: () => void; }) {
   const headerCls = tone === 'danger' ? 'bg-red-50 text-red-800' : 'bg-[#0b3b2f] text-white';
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">

@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Button, Input, Label } from '@/components/ui/basic';
 import { useAuth } from '@/lib/AuthContext';
+import { useSettings } from '@/lib/SettingsContext';
 
 export default function Login() {
   const { mode, setupAdmin, login } = useAuth();
+  const { brand } = useSettings();
   const isFirstRun = mode === 'first-run';
 
   const [fullName, setFullName] = useState('');
@@ -15,7 +17,6 @@ export default function Login() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-
     if (isFirstRun) {
       if (!fullName.trim()) return setError('Please enter your name.');
       if (password.length < 6) return setError('Password must be at least 6 characters.');
@@ -39,8 +40,9 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#0b3b2f] to-[#1e5a48] p-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden">
         <div className="bg-[#0b3b2f] text-white p-6 text-center">
-          <h1 className="text-2xl font-bold">EUS Desktop</h1>
-          <p className="text-sm text-white/70 mt-1">
+          <h1 className="text-2xl font-bold">{brand.orgName}</h1>
+          <p className="text-sm text-white/80 mt-0.5">{brand.orgNameNative}</p>
+          <p className="text-xs text-white/60 mt-2">
             {isFirstRun ? 'First-time setup — create your admin account' : 'Admin Login'}
           </p>
         </div>
@@ -55,12 +57,7 @@ export default function Login() {
           {isFirstRun && (
             <div className="space-y-2">
               <Label>Your Name</Label>
-              <Input
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="e.g. Hitesh Das"
-                autoFocus
-              />
+              <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g. Hitesh Das" autoFocus />
             </div>
           )}
 
@@ -78,11 +75,7 @@ export default function Login() {
           {isFirstRun && (
             <div className="space-y-2">
               <Label>Confirm Password</Label>
-              <Input
-                type="password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-              />
+              <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
             </div>
           )}
 
