@@ -1,0 +1,32 @@
+[package]
+name = "eus-desktop"
+version = "0.1.0"
+description = "EUS cooperative society admin — offline Windows desktop app"
+authors = ["EUS"]
+edition = "2021"
+rust-version = "1.75"
+
+[lib]
+name = "eus_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.1", features = [] }
+tauri-plugin-dialog = "2.0"
+tauri-plugin-fs = "2.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+argon2 = "0.5"
+rand = "0.8"
+uuid = { version = "1.11", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1"
+anyhow = "1"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
