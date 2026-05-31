@@ -309,6 +309,7 @@ pub fn create_member(
     )?;
 
     tx.commit()?;
+    drop(conn);
 
     get_member(state, id).and_then(|m| m.ok_or_else(|| msg("Failed to read created member")))
 }
@@ -382,6 +383,7 @@ pub fn update_member(
     )?;
 
     tx.commit()?;
+    drop(conn);
     get_member(state, id).and_then(|m| m.ok_or_else(|| msg("Failed to read updated member")))
 }
 
