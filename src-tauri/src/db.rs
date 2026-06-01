@@ -176,6 +176,66 @@ CREATE TABLE IF NOT EXISTS emi_payments (
   created_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_emi_payments_loan ON emi_payments(loan_id);
+
+-- =========================================================================
+-- External Investments (Org's own investments — stocks, business, etc.)
+-- =========================================================================
+
+CREATE TABLE IF NOT EXISTS external_investments (
+  id                TEXT PRIMARY KEY,
+  name              TEXT NOT NULL,
+  type              TEXT NOT NULL,
+  principal_amount  REAL NOT NULL CHECK (principal_amount > 0),
+  expected_roi      REAL,
+  start_date        TEXT NOT NULL,
+  maturity_date     TEXT,
+  payout_frequency  TEXT,
+  status            TEXT NOT NULL DEFAULT 'Active',
+  notes             TEXT,
+  created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS investment_returns (
+  id              TEXT PRIMARY KEY,
+  investment_id   TEXT NOT NULL REFERENCES external_investments(id) ON DELETE CASCADE,
+  amount          REAL NOT NULL CHECK (amount > 0),
+  return_date     TEXT NOT NULL,
+  description     TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_inv_returns_inv ON investment_returns(investment_id);
+
+-- =========================================================================
+-- External Personal Loans (non-member loans the org disburses)
+-- =========================================================================
+
+CREATE TABLE IF NOT EXISTS ext_loans (
+  id                TEXT PRIMARY KEY,
+  borrower_name     TEXT NOT NULL,
+  phone             TEXT,
+  address           TEXT,
+  id_proof          TEXT,
+  principal_amount  REAL NOT NULL CHECK (principal_amount > 0),
+  interest_rate     REAL NOT NULL,
+  start_date        TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'Active',
+  created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS ext_loan_txns (
+  id              TEXT PRIMARY KEY,
+  loan_id         TEXT NOT NULL REFERENCES ext_loans(id) ON DELETE CASCADE,
+  type            TEXT NOT NULL CHECK (type IN ('Interest Due','Interest Paid','Principal Paid')),
+  amount          REAL NOT NULL CHECK (amount > 0),
+  txn_date        TEXT NOT NULL,
+  receipt_number  TEXT,
+  notes           TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ext_loan_txns_loan ON ext_loan_txns(loan_id);
+CREATE INDEX IF NOT EXISTS idx_ext_loan_txns_date ON ext_loan_txns(txn_date);
 "#;
 
 const SEED_SETTINGS: &[(&str, &str)] = &[

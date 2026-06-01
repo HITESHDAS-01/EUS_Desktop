@@ -76,21 +76,31 @@ export default function EmiLoanProfile() {
     try {
       const amt = Number(paymentAmount);
       if (amt <= 0) throw new Error('Amount must be greater than 0');
-      const remainingTotal = loan.remaining_principal + (loan.total_interest * (loan.remaining_principal / loan.financed_amount));
-      void remainingTotal;
-      // Split: pay interest portion first up to interest per EMI, rest to principal
+
+      // Flat-interest schedule: each EMI = interestPerEmi + principalPerEmi.
+      // For a payment of `amt`, figure out how many full EMIs that covers
+      // (rounded to the nearest fraction) and split interest proportionally.
+      // This way a 2-EMI prepayment records 2x interest_portion, not 1x.
       const interestPerEmi = loan.total_interest / loan.tenure_months;
-      const interestPortion = Math.min(amt, interestPerEmi);
-      const principalPortion = Math.min(loan.remaining_principal, amt - interestPortion);
-      const adjustedInterest = amt - principalPortion; // any excess after capping principal becomes interest
+      const principalPerEmi = loan.financed_amount / loan.tenure_months;
+      const emiSize = interestPerEmi + principalPerEmi; // ≈ loan.emi_amount
+      const emisCovered = emiSize > 0 ? amt / emiSize : 0;
+      let interestPortion = r2(interestPerEmi * emisCovered);
+      let principalPortion = r2(amt - interestPortion);
+      // Clamp principal so we never overpay outstanding (push leftover to interest).
+      if (principalPortion > loan.remaining_principal) {
+        const overflow = principalPortion - loan.remaining_principal;
+        principalPortion = loan.remaining_principal;
+        interestPortion = r2(interestPortion + overflow);
+      }
       const dueDate = paymentDueDate || format(new Date(paymentDate), 'yyyy-MM-dd');
       const monthYear = format(startOfMonth(new Date(dueDate)), 'yyyy-MM-dd');
 
       await api.recordEmiPayment({
         loan_id: loan.id,
         amount_paid: amt,
-        principal_portion: r2(principalPortion),
-        interest_portion: r2(adjustedInterest),
+        principal_portion: principalPortion,
+        interest_portion: interestPortion,
         penalty_portion: 0,
         payment_date: paymentDate,
         due_date: dueDate,

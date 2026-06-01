@@ -1344,6 +1344,14 @@ pub fn export_backup_zip(state: State<'_, AppState>, dest_path: String) -> AppRe
     let appdata_dir = state.photos_dir.parent().ok_or_else(|| msg("Bad appdata dir"))?;
     let db_path = appdata_dir.join("eus.db");
 
+    // Checkpoint WAL into the main DB file so the .zip captures the live state,
+    // not just what's been flushed. TRUNCATE leaves a small WAL but ensures the
+    // main file is fully up-to-date.
+    {
+        let conn = state.db.lock().unwrap();
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    }
+
     let file = std::fs::File::create(dest).map_err(AppError::from)?;
     let mut zip = zip::ZipWriter::new(file);
     let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
@@ -1384,6 +1392,14 @@ impl From<zip::result::ZipError> for AppError {
     }
 }
 
+/// Generic write-text-to-file (admin-blessed via saveDialog on the JS side).
+#[tauri::command]
+pub fn write_text_file(state: State<'_, AppState>, path: String, content: String) -> AppResult<()> {
+    require_login(&state)?;
+    std::fs::write(&path, content.as_bytes()).map_err(AppError::from)?;
+    Ok(())
+}
+
 // ===========================================================================
 // Reports — helpers
 // ===========================================================================
@@ -1399,6 +1415,27 @@ pub fn list_savings_in_range(
     let mut stmt = conn.prepare(&format!(
         "{} WHERE s.payment_date >= ?1 AND s.payment_date <= ?2
          ORDER BY s.payment_date DESC",
+        SAVINGS_SELECT_SQL
+    ))?;
+    let rows = stmt.query_map(params![start, end], row_to_savings)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+/// Like list_savings_in_range but filters by month_year (the month the
+/// installment is FOR, not when it was paid). Used for Defaulter +
+/// Monthly Sheet reports — matches the eus original which a late payment
+/// recorded next month must still count for the original month.
+#[tauri::command]
+pub fn list_savings_by_month_year_range(
+    state: State<'_, AppState>,
+    start: String,
+    end: String,
+) -> AppResult<Vec<SavingsRow>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(&format!(
+        "{} WHERE s.month_year >= ?1 AND s.month_year <= ?2
+         ORDER BY s.month_year DESC, s.payment_date DESC",
         SAVINGS_SELECT_SQL
     ))?;
     let rows = stmt.query_map(params![start, end], row_to_savings)?;
@@ -2446,4 +2483,536 @@ fn add_months_naive(d: chrono::NaiveDate, months: i64) -> chrono::NaiveDate {
         y -= 1;
     }
     chrono::NaiveDate::from_ymd_opt(y, m as u32, d.day().min(28)).unwrap_or(d)
+}
+
+// ===========================================================================
+// External Investments
+// ===========================================================================
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ExtInvestment {
+    pub id: String,
+    pub name: String,
+    pub r#type: String,
+    pub principal_amount: f64,
+    pub expected_roi: Option<f64>,
+    pub start_date: String,
+    pub maturity_date: Option<String>,
+    pub payout_frequency: Option<String>,
+    pub status: String,
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub total_returns: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExtInvestmentInput {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub principal_amount: f64,
+    pub expected_roi: Option<f64>,
+    pub start_date: String,
+    pub maturity_date: Option<String>,
+    pub payout_frequency: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct InvestmentReturn {
+    pub id: String,
+    pub investment_id: String,
+    pub amount: f64,
+    pub return_date: String,
+    pub description: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InvestmentReturnInput {
+    pub investment_id: String,
+    pub amount: f64,
+    pub return_date: String,
+    pub description: Option<String>,
+}
+
+#[tauri::command]
+pub fn list_investments(state: State<'_, AppState>) -> AppResult<Vec<ExtInvestment>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT i.id, i.name, i.type, i.principal_amount, i.expected_roi,
+                i.start_date, i.maturity_date, i.payout_frequency, i.status,
+                i.notes, i.created_at,
+                COALESCE((SELECT SUM(amount) FROM investment_returns
+                          WHERE investment_id = i.id), 0)
+         FROM external_investments i
+         ORDER BY i.created_at DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(ExtInvestment {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            r#type: r.get(2)?,
+            principal_amount: r.get(3)?,
+            expected_roi: r.get(4)?,
+            start_date: r.get(5)?,
+            maturity_date: r.get(6)?,
+            payout_frequency: r.get(7)?,
+            status: r.get(8)?,
+            notes: r.get(9)?,
+            created_at: r.get(10)?,
+            total_returns: r.get(11)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+#[tauri::command]
+pub fn list_investment_returns(state: State<'_, AppState>) -> AppResult<Vec<InvestmentReturn>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT id, investment_id, amount, return_date, description, created_at
+         FROM investment_returns ORDER BY return_date DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(InvestmentReturn {
+            id: r.get(0)?,
+            investment_id: r.get(1)?,
+            amount: r.get(2)?,
+            return_date: r.get(3)?,
+            description: r.get(4)?,
+            created_at: r.get(5)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+#[tauri::command]
+pub fn create_investment(
+    state: State<'_, AppState>,
+    input: ExtInvestmentInput,
+) -> AppResult<()> {
+    require_login(&state)?;
+    if input.name.trim().is_empty() {
+        return Err(msg("Investment name is required"));
+    }
+    if input.principal_amount <= 0.0 {
+        return Err(msg("Principal must be greater than 0"));
+    }
+    let id = Uuid::new_v4().to_string();
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "INSERT INTO external_investments
+            (id, name, type, principal_amount, expected_roi, start_date,
+             maturity_date, payout_frequency, status, notes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'Active', ?9)",
+        params![
+            id,
+            input.name.trim(),
+            input.r#type,
+            input.principal_amount,
+            input.expected_roi,
+            input.start_date,
+            empty_to_none(input.maturity_date),
+            empty_to_none(input.payout_frequency),
+            empty_to_none(input.notes),
+        ],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_investment(
+    state: State<'_, AppState>,
+    id: String,
+    input: ExtInvestmentInput,
+) -> AppResult<()> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "UPDATE external_investments
+         SET name = ?2, type = ?3, principal_amount = ?4, expected_roi = ?5,
+             start_date = ?6, maturity_date = ?7, payout_frequency = ?8,
+             notes = ?9, updated_at = datetime('now')
+         WHERE id = ?1",
+        params![
+            id,
+            input.name.trim(),
+            input.r#type,
+            input.principal_amount,
+            input.expected_roi,
+            input.start_date,
+            empty_to_none(input.maturity_date),
+            empty_to_none(input.payout_frequency),
+            empty_to_none(input.notes),
+        ],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_investment_status(
+    state: State<'_, AppState>,
+    id: String,
+    status: String,
+) -> AppResult<()> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "UPDATE external_investments SET status = ?2, updated_at = datetime('now')
+         WHERE id = ?1",
+        params![id, status],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_investment(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    conn.execute("DELETE FROM external_investments WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn add_investment_return(
+    state: State<'_, AppState>,
+    input: InvestmentReturnInput,
+) -> AppResult<()> {
+    require_login(&state)?;
+    if input.amount <= 0.0 {
+        return Err(msg("Return amount must be greater than 0"));
+    }
+    let id = Uuid::new_v4().to_string();
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "INSERT INTO investment_returns
+          (id, investment_id, amount, return_date, description)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            id,
+            input.investment_id,
+            input.amount,
+            input.return_date,
+            empty_to_none(input.description),
+        ],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_investment_return(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    conn.execute("DELETE FROM investment_returns WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+// ===========================================================================
+// External Personal Loans (ext_loans + ext_loan_txns)
+// ===========================================================================
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ExtLoan {
+    pub id: String,
+    pub borrower_name: String,
+    pub phone: Option<String>,
+    pub address: Option<String>,
+    pub id_proof: Option<String>,
+    pub principal_amount: f64,
+    pub interest_rate: f64,
+    pub start_date: String,
+    pub status: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExtLoanInput {
+    pub borrower_name: String,
+    pub phone: Option<String>,
+    pub address: Option<String>,
+    pub id_proof: Option<String>,
+    pub principal_amount: f64,
+    pub interest_rate: f64,
+    pub start_date: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExtLoanEditInput {
+    pub borrower_name: String,
+    pub phone: Option<String>,
+    pub address: Option<String>,
+    pub id_proof: Option<String>,
+    pub interest_rate: f64,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ExtLoanTxn {
+    pub id: String,
+    pub loan_id: String,
+    pub r#type: String,
+    pub amount: f64,
+    pub txn_date: String,
+    pub receipt_number: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExtLoanPaymentInput {
+    pub loan_id: String,
+    pub r#type: String,
+    pub amount: f64,
+    pub txn_date: String,
+    pub notes: Option<String>,
+}
+
+fn row_to_ext_loan(r: &Row<'_>) -> rusqlite::Result<ExtLoan> {
+    Ok(ExtLoan {
+        id: r.get(0)?,
+        borrower_name: r.get(1)?,
+        phone: r.get(2)?,
+        address: r.get(3)?,
+        id_proof: r.get(4)?,
+        principal_amount: r.get(5)?,
+        interest_rate: r.get(6)?,
+        start_date: r.get(7)?,
+        status: r.get(8)?,
+        created_at: r.get(9)?,
+    })
+}
+
+const EXT_LOAN_COLS: &str = "id, borrower_name, phone, address, id_proof,
+        principal_amount, interest_rate, start_date, status, created_at";
+
+#[tauri::command]
+pub fn list_ext_loans(state: State<'_, AppState>) -> AppResult<Vec<ExtLoan>> {
+    require_login(&state)?;
+    // Auto-generate any missing monthly Interest Due rows first.
+    auto_generate_ext_interest(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM ext_loans ORDER BY created_at DESC",
+        EXT_LOAN_COLS
+    ))?;
+    let rows = stmt.query_map([], row_to_ext_loan)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+#[tauri::command]
+pub fn list_ext_loan_txns(state: State<'_, AppState>) -> AppResult<Vec<ExtLoanTxn>> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT id, loan_id, type, amount, txn_date, receipt_number, notes, created_at
+         FROM ext_loan_txns ORDER BY txn_date DESC, created_at DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(ExtLoanTxn {
+            id: r.get(0)?,
+            loan_id: r.get(1)?,
+            r#type: r.get(2)?,
+            amount: r.get(3)?,
+            txn_date: r.get(4)?,
+            receipt_number: r.get(5)?,
+            notes: r.get(6)?,
+            created_at: r.get(7)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+#[tauri::command]
+pub fn create_ext_loan(state: State<'_, AppState>, input: ExtLoanInput) -> AppResult<()> {
+    require_login(&state)?;
+    if input.borrower_name.trim().is_empty() {
+        return Err(msg("Borrower name is required"));
+    }
+    if input.principal_amount <= 0.0 {
+        return Err(msg("Principal must be greater than 0"));
+    }
+    let id = Uuid::new_v4().to_string();
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "INSERT INTO ext_loans
+            (id, borrower_name, phone, address, id_proof, principal_amount,
+             interest_rate, start_date, status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'Active')",
+        params![
+            id,
+            input.borrower_name.trim(),
+            empty_to_none(input.phone),
+            empty_to_none(input.address),
+            empty_to_none(input.id_proof),
+            input.principal_amount,
+            input.interest_rate,
+            input.start_date,
+        ],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_ext_loan(
+    state: State<'_, AppState>,
+    id: String,
+    input: ExtLoanEditInput,
+) -> AppResult<()> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "UPDATE ext_loans SET
+            borrower_name = ?2, phone = ?3, address = ?4, id_proof = ?5,
+            interest_rate = ?6, status = ?7, updated_at = datetime('now')
+         WHERE id = ?1",
+        params![
+            id,
+            input.borrower_name.trim(),
+            empty_to_none(input.phone),
+            empty_to_none(input.address),
+            empty_to_none(input.id_proof),
+            input.interest_rate,
+            input.status,
+        ],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_ext_loan(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    conn.execute("DELETE FROM ext_loans WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn add_ext_loan_payment(
+    state: State<'_, AppState>,
+    input: ExtLoanPaymentInput,
+) -> AppResult<ExtLoanTxn> {
+    require_login(&state)?;
+    if !matches!(
+        input.r#type.as_str(),
+        "Interest Paid" | "Principal Paid"
+    ) {
+        return Err(msg("Payment type must be 'Interest Paid' or 'Principal Paid'"));
+    }
+    if input.amount <= 0.0 {
+        return Err(msg("Amount must be greater than 0"));
+    }
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let n: u32 = rng.gen_range(100_000..1_000_000);
+    let receipt = format!("REC-{}", n);
+    let id = Uuid::new_v4().to_string();
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "INSERT INTO ext_loan_txns
+          (id, loan_id, type, amount, txn_date, receipt_number, notes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            id,
+            input.loan_id,
+            input.r#type,
+            input.amount,
+            input.txn_date,
+            receipt,
+            empty_to_none(input.notes.clone()),
+        ],
+    )?;
+    Ok(ExtLoanTxn {
+        id,
+        loan_id: input.loan_id,
+        r#type: input.r#type,
+        amount: input.amount,
+        txn_date: input.txn_date,
+        receipt_number: Some(receipt),
+        notes: input.notes,
+        created_at: chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+#[tauri::command]
+pub fn delete_ext_loan_txn(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    require_login(&state)?;
+    let conn = state.db.lock().unwrap();
+    // Only allow deleting non-auto rows (Interest Due rows are auto-managed)
+    let row: Option<String> = conn
+        .query_row(
+            "SELECT type FROM ext_loan_txns WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(t) = row else { return Err(msg("Transaction not found")); };
+    if t == "Interest Due" {
+        return Err(msg(
+            "Interest Due rows are auto-generated and cannot be deleted.",
+        ));
+    }
+    conn.execute("DELETE FROM ext_loan_txns WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+/// Walk each active ext_loan and INSERT one 'Interest Due' row per month
+/// since start_date+1 month, up to today, if none exists for that month.
+fn auto_generate_ext_interest(state: &AppState) -> AppResult<()> {
+    let mut conn = state.db.lock().unwrap();
+    let loans: Vec<(String, f64, f64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, principal_amount, interest_rate, start_date
+             FROM ext_loans WHERE status = 'Active'",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, f64>(1)?,
+                r.get::<_, f64>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+
+    let today = chrono::Local::now().date_naive();
+    let tx = conn.transaction()?;
+    for (loan_id, principal, rate, start_date) in loans {
+        let start = match chrono::NaiveDate::parse_from_str(&start_date, "%Y-%m-%d") {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let monthly_interest = (principal * rate) / 100.0;
+        let mut cur = add_months_naive(start, 1);
+        while cur <= today {
+            let month_key = cur.format("%Y-%m").to_string();
+            let exists: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM ext_loan_txns
+                 WHERE loan_id = ?1 AND type = 'Interest Due'
+                   AND substr(txn_date, 1, 7) = ?2",
+                params![loan_id, month_key],
+                |r| r.get(0),
+            )?;
+            if exists == 0 {
+                tx.execute(
+                    "INSERT INTO ext_loan_txns
+                      (id, loan_id, type, amount, txn_date, notes)
+                     VALUES (?1, ?2, 'Interest Due', ?3, ?4, ?5)",
+                    params![
+                        Uuid::new_v4().to_string(),
+                        loan_id,
+                        monthly_interest,
+                        cur.format("%Y-%m-%d").to_string(),
+                        format!("Auto-generated interest for {}", cur.format("%B %Y")),
+                    ],
+                )?;
+            }
+            cur = add_months_naive(cur, 1);
+        }
+    }
+    tx.commit()?;
+    Ok(())
 }

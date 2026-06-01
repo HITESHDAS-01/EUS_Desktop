@@ -10,6 +10,7 @@ import Transactions from '@/pages/admin/Transactions';
 import Loans from '@/pages/admin/Loans';
 import Settings from '@/pages/admin/Settings';
 import Reports from '@/pages/admin/Reports';
+import Investments from '@/pages/admin/Investments';
 import ProductEmi from '@/pages/admin/ProductEmi';
 import EmiCustomerProfile from '@/pages/admin/emi/EmiCustomerProfile';
 import EmiLoanProfile from '@/pages/admin/emi/EmiLoanProfile';
@@ -33,6 +34,7 @@ function Gate() {
         <Route path="members/:id" element={<MemberProfile />} />
         <Route path="transactions" element={<Transactions />} />
         <Route path="loans" element={<Loans />} />
+        <Route path="investments" element={<Investments />} />
         <Route path="reports" element={<Reports />} />
         <Route path="emi" element={<ProductEmi />} />
         <Route path="emi/customers/:id" element={<EmiCustomerProfile />} />

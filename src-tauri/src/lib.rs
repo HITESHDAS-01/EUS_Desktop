@@ -74,8 +74,10 @@ pub fn run() {
             commands::get_dashboard_stats,
             // backup
             commands::export_backup_zip,
+            commands::write_text_file,
             // reports
             commands::list_savings_in_range,
+            commands::list_savings_by_month_year_range,
             commands::list_repayments_in_range,
             // EMI: vendors
             commands::list_vendors,
@@ -103,6 +105,23 @@ pub fn run() {
             // EMI: bundle + dashboard
             commands::get_emi_loan_bundle,
             commands::get_emi_dashboard_stats,
+            // Investments
+            commands::list_investments,
+            commands::list_investment_returns,
+            commands::create_investment,
+            commands::update_investment,
+            commands::update_investment_status,
+            commands::delete_investment,
+            commands::add_investment_return,
+            commands::delete_investment_return,
+            // External personal loans
+            commands::list_ext_loans,
+            commands::list_ext_loan_txns,
+            commands::create_ext_loan,
+            commands::update_ext_loan,
+            commands::delete_ext_loan,
+            commands::add_ext_loan_payment,
+            commands::delete_ext_loan_txn,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

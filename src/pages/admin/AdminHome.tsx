@@ -1,15 +1,20 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { api } from '@/lib/api';
 import { formatCurrency, safeFormatDate } from '@/lib/utils';
+import { useSettings } from '@/lib/SettingsContext';
 import type { DashboardStats } from '@/types/db';
 
 const cardClass =
   'bg-white rounded-3xl p-6 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] hover:shadow-[0_8px_20px_-6px_rgba(6,81,237,0.15)] transition-shadow duration-300 border border-gray-50 relative overflow-hidden group';
 
 export default function AdminHome() {
+  const { brand } = useSettings();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     api
@@ -18,6 +23,40 @@ export default function AdminHome() {
       .catch((e) => console.error(e))
       .finally(() => setLoading(false));
   }, []);
+
+  const handleExport = async () => {
+    if (!stats) return;
+    setExporting(true);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const defaultName = `${brand.orgShort.toLowerCase()}_dashboard_${today}.csv`;
+      const dest = await saveDialog({
+        defaultPath: defaultName,
+        filters: [{ name: 'CSV', extensions: ['csv'] }],
+      });
+      if (!dest) return;
+      const rows: string[] = [
+        'Metric,Value',
+        `Total Treasury,${stats.total_treasury}`,
+        `Active Loans,${stats.active_loans}`,
+        `Total Members,${stats.total_members}`,
+        `Current Month Collection,${stats.current_month_collection}`,
+        `Total Penalty Collected,${stats.total_penalty_collected}`,
+        `Total Interest Earned,${stats.total_interest_earned}`,
+        `Matured Members,${stats.matured_members_count}`,
+        `Pending Installments,${stats.pending_installments}`,
+        '',
+        'Recent Transactions',
+        'Member,Date,Amount,Penalty',
+        ...stats.recent_tx.map((t) => `${t.member_code ?? ''},${t.created_at},${t.amount},${t.penalty}`),
+      ];
+      await api.writeTextFile(dest, rows.join('\n'));
+    } catch (err) {
+      console.error('Export failed', err);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   if (loading || !stats) return <div className="p-6">Loading dashboard...</div>;
 
@@ -36,6 +75,14 @@ export default function AdminHome() {
     <div className="space-y-6">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-2xl font-medium text-gray-800 tracking-tight">Dashboard Overview</h2>
+        <button
+          onClick={handleExport}
+          disabled={exporting}
+          className="bg-[#1e5a48] hover:bg-[#154234] text-white px-4 py-2 rounded-full shadow-sm hover:shadow-md transition-all duration-200 flex items-center gap-2 text-sm font-medium active:scale-[0.98] disabled:opacity-60"
+        >
+          <i className={`fas ${exporting ? 'fa-spinner fa-spin' : 'fa-download'}`}></i>
+          {exporting ? 'Exporting…' : 'Export Report'}
+        </button>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
@@ -55,8 +102,11 @@ export default function AdminHome() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8 mt-8">
         {/* Recent Activity */}
         <div className="bg-white rounded-3xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-gray-50 overflow-hidden flex flex-col">
-          <div className="p-6 border-b border-gray-100">
+          <div className="p-6 border-b border-gray-100 flex justify-between items-center">
             <h3 className="text-lg font-medium text-gray-800">Recent Transactions</h3>
+            <Link to="/admin/transactions" className="text-sm text-[#1e5a48] font-medium hover:bg-[#1e5a48]/10 px-3 py-1.5 rounded-full transition-colors">
+              View All
+            </Link>
           </div>
           <div className="p-0 flex-1 overflow-y-auto max-h-[400px]">
             <table className="w-full text-left text-sm">

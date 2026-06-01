@@ -302,3 +302,100 @@ export type EmiDashboardStats = {
   overdue: EmiOverdueRow[];
   recent_payments: EmiPaymentRecent[];
 };
+
+// =========================================================================
+// Investments + External Loans
+// =========================================================================
+
+export type ExtInvestment = {
+  id: string;
+  name: string;
+  type: string;
+  principal_amount: number;
+  expected_roi: number | null;
+  start_date: string;
+  maturity_date: string | null;
+  payout_frequency: string | null;
+  status: string;
+  notes: string | null;
+  created_at: string;
+  total_returns: number;
+};
+
+export type ExtInvestmentInput = {
+  name: string;
+  type: string;
+  principal_amount: number;
+  expected_roi: number | null;
+  start_date: string;
+  maturity_date: string | null;
+  payout_frequency: string | null;
+  notes: string | null;
+};
+
+export type InvestmentReturn = {
+  id: string;
+  investment_id: string;
+  amount: number;
+  return_date: string;
+  description: string | null;
+  created_at: string;
+};
+
+export type InvestmentReturnInput = {
+  investment_id: string;
+  amount: number;
+  return_date: string;
+  description: string | null;
+};
+
+export type ExtLoan = {
+  id: string;
+  borrower_name: string;
+  phone: string | null;
+  address: string | null;
+  id_proof: string | null;
+  principal_amount: number;
+  interest_rate: number;
+  start_date: string;
+  status: string;
+  created_at: string;
+};
+
+export type ExtLoanInput = {
+  borrower_name: string;
+  phone: string | null;
+  address: string | null;
+  id_proof: string | null;
+  principal_amount: number;
+  interest_rate: number;
+  start_date: string;
+};
+
+export type ExtLoanEditInput = {
+  borrower_name: string;
+  phone: string | null;
+  address: string | null;
+  id_proof: string | null;
+  interest_rate: number;
+  status: string;
+};
+
+export type ExtLoanTxn = {
+  id: string;
+  loan_id: string;
+  type: string;
+  amount: number;
+  txn_date: string;
+  receipt_number: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+export type ExtLoanPaymentInput = {
+  loan_id: string;
+  type: 'Interest Paid' | 'Principal Paid';
+  amount: number;
+  txn_date: string;
+  notes: string | null;
+};

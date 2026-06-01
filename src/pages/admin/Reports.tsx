@@ -131,11 +131,12 @@ export default function Reports() {
   const loadDefaulter = async () => {
     setLoading(true);
     try {
+      // Use month_year-based filter (matches eus original) so a late payment
+      // recorded in the next month still counts for its original month.
       const [members, savingsInRange] = await Promise.all([
         api.listMembers(),
-        api.listSavingsInRange(startDate, endDate),
+        api.listSavingsByMonthYearRange(startDate, endDate),
       ]);
-      // month_year-based check
       const paid = new Set(savingsInRange.map((s) => s.member_id));
       const def = members.filter(
         (m) => (m.category === 'A' || m.category === 'C') && m.status === 'active' && !paid.has(m.id),
@@ -151,7 +152,8 @@ export default function Reports() {
     try {
       const [members, savings] = await Promise.all([
         api.listMembers(),
-        api.listSavingsInRange(
+        // month_year, not payment_date — late payments still count for May.
+        api.listSavingsByMonthYearRange(
           format(startOfMonth(new Date()), 'yyyy-MM-dd'),
           format(endOfMonth(new Date()), 'yyyy-MM-dd'),
         ),

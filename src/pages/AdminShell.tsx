@@ -9,6 +9,7 @@ const navItems: { path: string; label: string; icon: string; exact?: boolean; di
   { path: '/admin/members', label: 'Members', icon: 'fas fa-users' },
   { path: '/admin/transactions', label: 'Transactions', icon: 'fas fa-rupee-sign' },
   { path: '/admin/loans', label: 'Loans', icon: 'fas fa-hand-holding-usd' },
+  { path: '/admin/investments', label: 'Investments', icon: 'fas fa-chart-line' },
   { path: '/admin/emi', label: 'Product EMI', icon: 'fas fa-mobile-alt' },
   { path: '/admin/reports', label: 'Reports', icon: 'fas fa-chart-bar' },
   { path: '/admin/settings', label: 'Settings', icon: 'fas fa-cog' },
@@ -16,12 +17,13 @@ const navItems: { path: string; label: string; icon: string; exact?: boolean; di
 
 export default function AdminShell() {
   const { logout } = useAuth();
-  const { brand } = useSettings();
+  const { brand, text } = useSettings();
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(() =>
     typeof window === 'undefined' ? true : window.innerWidth >= 1024,
   );
   const [adminName, setAdminName] = useState('Admin');
+  const logoUrl = text.org_logo_url || '';
 
   useEffect(() => {
     api
@@ -53,9 +55,18 @@ export default function AdminShell() {
       >
         <div className="h-16 flex items-center px-4 shrink-0">
           <Link to="/admin" className="flex items-center" title="Dashboard">
-            <div className="w-10 h-10 rounded-xl bg-white p-1 shadow-sm shrink-0 flex items-center justify-center text-[#0b3b2f] font-bold">
-              {brand.orgShort.slice(0, 3)}
-            </div>
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt={`${brand.orgShort} Logo`}
+                className="w-10 h-10 object-contain bg-white rounded-xl p-1 shadow-sm shrink-0 hover:ring-2 hover:ring-[#f7b05e] transition-all"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-white p-1 shadow-sm shrink-0 flex items-center justify-center text-[#0b3b2f] font-bold hover:ring-2 hover:ring-[#f7b05e] transition-all">
+                {brand.orgShort.slice(0, 3)}
+              </div>
+            )}
             <span
               className={`ml-3 font-bold text-lg tracking-wide whitespace-nowrap transition-opacity duration-300 hover:text-[#f7b05e] ${
                 isSidebarOpen ? 'opacity-100' : 'opacity-0 lg:hidden'

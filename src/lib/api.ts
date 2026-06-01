@@ -11,6 +11,15 @@ import type {
   EmiLoanUpdate,
   EmiPayment,
   EmiPaymentInput,
+  ExtInvestment,
+  ExtInvestmentInput,
+  ExtLoan,
+  ExtLoanEditInput,
+  ExtLoanInput,
+  ExtLoanPaymentInput,
+  ExtLoanTxn,
+  InvestmentReturn,
+  InvestmentReturnInput,
   LoanInput,
   LoanRow,
   MemberInput,
@@ -94,13 +103,17 @@ export const api = {
   // ---------- dashboard ----------
   getDashboardStats: () => invoke<DashboardStats>('get_dashboard_stats'),
 
-  // ---------- backup ----------
+  // ---------- backup / file write ----------
   exportBackupZip: (destPath: string) =>
     invoke<string>('export_backup_zip', { destPath }),
+  writeTextFile: (path: string, content: string) =>
+    invoke<void>('write_text_file', { path, content }),
 
   // ---------- reports ----------
   listSavingsInRange: (start: string, end: string) =>
     invoke<SavingsRow[]>('list_savings_in_range', { start, end }),
+  listSavingsByMonthYearRange: (start: string, end: string) =>
+    invoke<SavingsRow[]>('list_savings_by_month_year_range', { start, end }),
   listRepaymentsInRange: (start: string, end: string) =>
     invoke<RepaymentReportRow[]>('list_repayments_in_range', { start, end }),
 
@@ -152,6 +165,32 @@ export const api = {
     invoke<EmiLoanBundle>('get_emi_loan_bundle', { loanId }),
   getEmiDashboardStats: () =>
     invoke<EmiDashboardStats>('get_emi_dashboard_stats'),
+
+  // ---------- Investments ----------
+  listInvestments: () => invoke<ExtInvestment[]>('list_investments'),
+  listInvestmentReturns: () => invoke<InvestmentReturn[]>('list_investment_returns'),
+  createInvestment: (input: ExtInvestmentInput) =>
+    invoke<void>('create_investment', { input }),
+  updateInvestment: (id: string, input: ExtInvestmentInput) =>
+    invoke<void>('update_investment', { id, input }),
+  updateInvestmentStatus: (id: string, status: string) =>
+    invoke<void>('update_investment_status', { id, status }),
+  deleteInvestment: (id: string) => invoke<void>('delete_investment', { id }),
+  addInvestmentReturn: (input: InvestmentReturnInput) =>
+    invoke<void>('add_investment_return', { input }),
+  deleteInvestmentReturn: (id: string) =>
+    invoke<void>('delete_investment_return', { id }),
+
+  // ---------- External personal loans ----------
+  listExtLoans: () => invoke<ExtLoan[]>('list_ext_loans'),
+  listExtLoanTxns: () => invoke<ExtLoanTxn[]>('list_ext_loan_txns'),
+  createExtLoan: (input: ExtLoanInput) => invoke<void>('create_ext_loan', { input }),
+  updateExtLoan: (id: string, input: ExtLoanEditInput) =>
+    invoke<void>('update_ext_loan', { id, input }),
+  deleteExtLoan: (id: string) => invoke<void>('delete_ext_loan', { id }),
+  addExtLoanPayment: (input: ExtLoanPaymentInput) =>
+    invoke<ExtLoanTxn>('add_ext_loan_payment', { input }),
+  deleteExtLoanTxn: (id: string) => invoke<void>('delete_ext_loan_txn', { id }),
 };
 
 export function photoSrc(path: string | null | undefined): string {
