@@ -260,11 +260,9 @@ const SEED_TEXT_SETTINGS: &[(&str, &str)] = &[
     ("org_logo_url", ""),
 ];
 
-pub fn open_and_migrate(db_path: &Path) -> AppResult<Connection> {
-    let conn = Connection::open(db_path)?;
-    conn.execute_batch(SCHEMA_SQL)?;
-    add_column_if_missing(&conn, "members", "loan_interest_rate", "REAL")?;
-
+/// Insert seed rows into settings + app_text_settings if absent. Used by
+/// open_and_migrate at startup AND by factory_reset after a full wipe.
+pub fn seed_defaults(conn: &Connection) -> AppResult<()> {
     for (k, v) in SEED_SETTINGS {
         conn.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES (?1, ?2)",
@@ -277,6 +275,14 @@ pub fn open_and_migrate(db_path: &Path) -> AppResult<Connection> {
             params![k, v],
         )?;
     }
+    Ok(())
+}
+
+pub fn open_and_migrate(db_path: &Path) -> AppResult<Connection> {
+    let conn = Connection::open(db_path)?;
+    conn.execute_batch(SCHEMA_SQL)?;
+    add_column_if_missing(&conn, "members", "loan_interest_rate", "REAL")?;
+    seed_defaults(&conn)?;
     Ok(conn)
 }
 

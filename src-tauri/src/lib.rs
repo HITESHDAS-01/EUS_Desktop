@@ -41,6 +41,8 @@ pub fn run() {
             commands::get_admin_profile,
             commands::update_admin_profile,
             commands::change_admin_password,
+            commands::reset_admin_only,
+            commands::factory_reset,
             // settings
             commands::list_settings,
             commands::list_text_settings,

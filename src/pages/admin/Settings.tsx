@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { Button, Input, Label } from '@/components/ui/basic';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/AuthContext';
 import { useSettings } from '@/lib/SettingsContext';
 
 const SETTING_LABELS: Record<string, string> = {
@@ -30,6 +31,7 @@ const labelFor = (k: string) => SETTING_LABELS[k] || TEXT_LABELS[k] || k.replace
 
 export default function Settings() {
   const { numeric, text, reload } = useSettings();
+  const { refresh: refreshAuth } = useAuth();
   const [activeTab, setActiveTab] = useState<'system' | 'organization' | 'security' | 'backup'>('system');
 
   // local edit buffers
@@ -57,6 +59,40 @@ export default function Settings() {
   // backup
   const [backupLoading, setBackupLoading] = useState(false);
   const [backupMessage, setBackupMessage] = useState('');
+
+  // danger zone
+  const [resetMode, setResetMode] = useState<'admin' | 'factory' | null>(null);
+  const [resetPwd, setResetPwd] = useState('');
+  const [resetConfirmType, setResetConfirmType] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState('');
+
+  const handleReset = async () => {
+    setResetLoading(true); setResetError('');
+    try {
+      if (resetMode === 'admin') {
+        await api.resetAdminOnly(resetPwd);
+      } else if (resetMode === 'factory') {
+        if (resetConfirmType !== 'DELETE') {
+          throw new Error('Type DELETE exactly to confirm factory reset.');
+        }
+        await api.factoryReset(resetPwd);
+      }
+      // App is now logged-out + admin-less → AuthContext refresh → WelcomeWizard
+      await refreshAuth();
+    } catch (err) {
+      setResetError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const closeResetModal = () => {
+    setResetMode(null);
+    setResetPwd('');
+    setResetConfirmType('');
+    setResetError('');
+  };
 
   const handleSaveSystem = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -245,6 +281,138 @@ export default function Settings() {
               {saving ? 'Updating…' : 'Update Profile'}
             </Button>
           </form>
+
+          {/* Danger Zone */}
+          <div className="mt-10 pt-6 border-t-2 border-red-100">
+            <div className="flex items-center gap-2 mb-1">
+              <i className="fas fa-exclamation-triangle text-red-600"></i>
+              <h3 className="text-base font-bold text-red-700">Danger Zone</h3>
+            </div>
+            <p className="text-xs text-gray-500 mb-4">
+              These actions log you out and cannot be undone (except by restoring a backup).
+            </p>
+
+            <div className="space-y-3">
+              {/* Reset admin only */}
+              <div className="border border-orange-200 rounded-xl p-4 bg-orange-50/40 flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-orange-800 text-sm">Reset Admin Account</p>
+                  <p className="text-xs text-orange-700/80 mt-1">
+                    Delete this admin profile and return to the welcome wizard. All members,
+                    transactions, loans, EMI, and settings are <strong>preserved</strong>. The next
+                    person who opens the app sets up a fresh admin and inherits everything.
+                  </p>
+                </div>
+                <Button
+                  onClick={() => { setResetMode('admin'); setResetError(''); }}
+                  className="bg-orange-600 hover:bg-orange-700 text-white shrink-0"
+                >
+                  Reset Admin
+                </Button>
+              </div>
+
+              {/* Factory reset */}
+              <div className="border border-red-200 rounded-xl p-4 bg-red-50/40 flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-red-800 text-sm">Factory Reset</p>
+                  <p className="text-xs text-red-700/80 mt-1">
+                    Permanently delete <strong>everything</strong> — admin, members, transactions,
+                    loans, EMI loans, investments, settings, all member photos. App returns to a
+                    truly fresh-install state. <strong>Take a backup first.</strong>
+                  </p>
+                </div>
+                <Button
+                  onClick={() => { setResetMode('factory'); setResetError(''); }}
+                  className="bg-red-600 hover:bg-red-700 text-white shrink-0"
+                >
+                  Factory Reset
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset confirmation modal */}
+      {resetMode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className={`p-5 border-b flex items-center gap-3 ${
+              resetMode === 'admin' ? 'bg-orange-50 text-orange-800' : 'bg-red-50 text-red-800'
+            }`}>
+              <i className="fas fa-exclamation-triangle text-xl"></i>
+              <h3 className="font-bold text-lg">
+                {resetMode === 'admin' ? 'Reset Admin Account?' : 'Factory Reset Everything?'}
+              </h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-700">
+                {resetMode === 'admin' ? (
+                  <>
+                    You will be logged out and the welcome wizard will run again. All business data
+                    (members, transactions, loans, EMI, investments, settings) <strong>stays
+                    intact</strong>.
+                  </>
+                ) : (
+                  <>
+                    Every row in every table will be deleted: admin, members, transactions, loans,
+                    EMI, investments, vendors, settings — plus all uploaded photos. The next launch
+                    will look like a fresh install. <strong>Backup first if you want to keep this
+                    data.</strong>
+                  </>
+                )}
+              </p>
+
+              <div className="space-y-2">
+                <Label>Your password</Label>
+                <Input
+                  type="password"
+                  value={resetPwd}
+                  onChange={(e) => setResetPwd(e.target.value)}
+                  autoComplete="current-password"
+                  autoFocus
+                />
+              </div>
+
+              {resetMode === 'factory' && (
+                <div className="space-y-2">
+                  <Label>Type <code className="bg-gray-100 px-1.5 py-0.5 rounded font-bold text-red-700">DELETE</code> to confirm</Label>
+                  <Input
+                    type="text"
+                    value={resetConfirmType}
+                    onChange={(e) => setResetConfirmType(e.target.value)}
+                  />
+                </div>
+              )}
+
+              {resetError && (
+                <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm border border-red-100">
+                  {resetError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-2">
+                <Button variant="outline" onClick={closeResetModal} disabled={resetLoading}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleReset}
+                  disabled={
+                    resetLoading ||
+                    !resetPwd ||
+                    (resetMode === 'factory' && resetConfirmType !== 'DELETE')
+                  }
+                  className={resetMode === 'admin'
+                    ? 'bg-orange-600 hover:bg-orange-700 text-white'
+                    : 'bg-red-600 hover:bg-red-700 text-white'}
+                >
+                  {resetLoading
+                    ? 'Working…'
+                    : resetMode === 'admin' ? 'Reset Admin' : 'Permanently Delete Everything'}
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

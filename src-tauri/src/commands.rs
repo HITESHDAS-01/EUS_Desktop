@@ -329,6 +329,83 @@ pub fn update_admin_profile(state: State<'_, AppState>, full_name: String) -> Ap
     Ok(())
 }
 
+/// Wipe the admin row only — all business data (members, transactions,
+/// loans, EMI, investments, settings) stays intact. App returns to the
+/// first-run wizard so a new administrator can be created.
+#[tauri::command]
+pub fn reset_admin_only(state: State<'_, AppState>, password: String) -> AppResult<()> {
+    require_login(&state)?;
+    let stored: String = {
+        let conn = state.db.lock().unwrap();
+        conn.query_row("SELECT password_hash FROM admin_account WHERE id = 1", [], |r| {
+            r.get(0)
+        })?
+    };
+    if !auth::verify_password(&password, &stored)? {
+        return Err(msg("Incorrect password."));
+    }
+    {
+        let conn = state.db.lock().unwrap();
+        conn.execute("DELETE FROM admin_account", [])?;
+    }
+    *state.logged_in.lock().unwrap() = false;
+    Ok(())
+}
+
+/// Nuke everything: every business row, every photo, the admin account.
+/// Re-seed default settings so the app is fresh-install state.
+#[tauri::command]
+pub fn factory_reset(state: State<'_, AppState>, password: String) -> AppResult<()> {
+    require_login(&state)?;
+    let stored: String = {
+        let conn = state.db.lock().unwrap();
+        conn.query_row("SELECT password_hash FROM admin_account WHERE id = 1", [], |r| {
+            r.get(0)
+        })?
+    };
+    if !auth::verify_password(&password, &stored)? {
+        return Err(msg("Incorrect password."));
+    }
+
+    {
+        let mut conn = state.db.lock().unwrap();
+        let tx = conn.transaction()?;
+        // Order respects FK dependencies (children before parents).
+        tx.execute("DELETE FROM emi_payments", [])?;
+        tx.execute("DELETE FROM emi_loans", [])?;
+        tx.execute("DELETE FROM emi_customers", [])?;
+        tx.execute("DELETE FROM vendors", [])?;
+        tx.execute("DELETE FROM ext_loan_txns", [])?;
+        tx.execute("DELETE FROM ext_loans", [])?;
+        tx.execute("DELETE FROM investment_returns", [])?;
+        tx.execute("DELETE FROM external_investments", [])?;
+        tx.execute("DELETE FROM loan_repayments", [])?;
+        tx.execute("DELETE FROM loans", [])?;
+        tx.execute("DELETE FROM savings_installments", [])?;
+        tx.execute("DELETE FROM members", [])?;
+        tx.execute("DELETE FROM profiles", [])?;
+        tx.execute("DELETE FROM settings", [])?;
+        tx.execute("DELETE FROM app_text_settings", [])?;
+        tx.execute("DELETE FROM admin_account", [])?;
+        tx.commit()?;
+        db::seed_defaults(&conn)?;
+    }
+
+    // Remove member photos on disk.
+    if state.photos_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&state.photos_dir) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+
+    *state.logged_in.lock().unwrap() = false;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn change_admin_password(
     state: State<'_, AppState>,

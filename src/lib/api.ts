@@ -48,6 +48,10 @@ export const api = {
     invoke<void>('update_admin_profile', { fullName }),
   changeAdminPassword: (currentPassword: string, newPassword: string) =>
     invoke<void>('change_admin_password', { currentPassword, newPassword }),
+  resetAdminOnly: (password: string) =>
+    invoke<void>('reset_admin_only', { password }),
+  factoryReset: (password: string) =>
+    invoke<void>('factory_reset', { password }),
 
   // ---------- settings ----------
   listSettings: () => invoke<Record<string, string>>('list_settings'),

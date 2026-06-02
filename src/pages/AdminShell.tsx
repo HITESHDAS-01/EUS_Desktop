@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import { useSettings } from '@/lib/SettingsContext';
 import { api } from '@/lib/api';
+import { Button } from '@/components/ui/basic';
 import AboutModal from '@/components/AboutModal';
 
 const navItems: { path: string; label: string; icon: string; exact?: boolean; disabled?: boolean }[] = [
@@ -26,6 +27,8 @@ export default function AdminShell() {
   );
   const [adminName, setAdminName] = useState('Admin');
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const logoUrl = text.org_logo_url || '';
 
   useEffect(() => {
@@ -141,7 +144,7 @@ export default function AdminShell() {
 
         <div className="p-3 shrink-0 border-t border-white/10">
           <button
-            onClick={() => logout()}
+            onClick={() => setLogoutOpen(true)}
             className={`flex items-center px-4 py-3.5 w-full rounded-full text-red-300 hover:bg-red-500/10 hover:text-red-200 transition-all duration-200 ${
               !isSidebarOpen ? 'justify-center lg:justify-start' : ''
             }`}
@@ -195,6 +198,36 @@ export default function AdminShell() {
         </header>
 
         {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
+        {logoutOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden">
+              <div className="p-5 border-b bg-red-50 text-red-800 flex items-center gap-3">
+                <i className="fas fa-sign-out-alt text-xl"></i>
+                <h3 className="font-bold text-lg">Log out?</h3>
+              </div>
+              <div className="p-6">
+                <p className="text-gray-700 mb-6 text-sm">
+                  You'll need to enter your password again to log back in.
+                </p>
+                <div className="flex justify-end gap-3">
+                  <Button variant="outline" onClick={() => setLogoutOpen(false)} disabled={loggingOut}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      setLoggingOut(true);
+                      try { await logout(); } finally { setLoggingOut(false); setLogoutOpen(false); }
+                    }}
+                    disabled={loggingOut}
+                    className="bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    {loggingOut ? 'Logging out…' : 'Log Out'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <main className="flex-1 overflow-auto p-4 lg:p-8">
           <div className="max-w-7xl mx-auto">
