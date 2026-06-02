@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { SettingsProvider } from '@/lib/SettingsContext';
 import Login from '@/pages/Login';
+import WelcomeWizard from '@/pages/WelcomeWizard';
 import AdminShell from '@/pages/AdminShell';
 import AdminHome from '@/pages/admin/AdminHome';
 import Members from '@/pages/admin/Members';
@@ -14,6 +15,7 @@ import Investments from '@/pages/admin/Investments';
 import ProductEmi from '@/pages/admin/ProductEmi';
 import EmiCustomerProfile from '@/pages/admin/emi/EmiCustomerProfile';
 import EmiLoanProfile from '@/pages/admin/emi/EmiLoanProfile';
+import Help from '@/pages/admin/Help';
 
 function Gate() {
   const { mode } = useAuth();
@@ -24,6 +26,7 @@ function Gate() {
       </div>
     );
   }
+  if (mode === 'first-run') return <WelcomeWizard />;
   if (mode !== 'logged-in') return <Login />;
 
   return (
@@ -40,6 +43,7 @@ function Gate() {
         <Route path="emi/customers/:id" element={<EmiCustomerProfile />} />
         <Route path="emi/loans/:id" element={<EmiLoanProfile />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="help" element={<Help />} />
       </Route>
       <Route path="*" element={<Navigate to="/admin" replace />} />
     </Routes>

@@ -14,3 +14,7 @@ export const locale = {
   currencyLocale: 'en-IN',
   currencySymbol: '₹',
 };
+
+// Bumped manually on every meaningful release. Shown in About dialog.
+export const APP_VERSION = '0.4.0';
+export const APP_REPO_URL = 'https://github.com/HITESHDAS-01/EUS_Desktop';

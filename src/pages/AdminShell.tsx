@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import { useSettings } from '@/lib/SettingsContext';
 import { api } from '@/lib/api';
+import AboutModal from '@/components/AboutModal';
 
 const navItems: { path: string; label: string; icon: string; exact?: boolean; disabled?: boolean }[] = [
   { path: '/admin', label: 'Dashboard', icon: 'fas fa-home', exact: true },
@@ -13,6 +14,7 @@ const navItems: { path: string; label: string; icon: string; exact?: boolean; di
   { path: '/admin/emi', label: 'Product EMI', icon: 'fas fa-mobile-alt' },
   { path: '/admin/reports', label: 'Reports', icon: 'fas fa-chart-bar' },
   { path: '/admin/settings', label: 'Settings', icon: 'fas fa-cog' },
+  { path: '/admin/help', label: 'Help', icon: 'fas fa-circle-question' },
 ];
 
 export default function AdminShell() {
@@ -23,6 +25,7 @@ export default function AdminShell() {
     typeof window === 'undefined' ? true : window.innerWidth >= 1024,
   );
   const [adminName, setAdminName] = useState('Admin');
+  const [aboutOpen, setAboutOpen] = useState(false);
   const logoUrl = text.org_logo_url || '';
 
   useEffect(() => {
@@ -172,6 +175,13 @@ export default function AdminShell() {
           </div>
 
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => setAboutOpen(true)}
+              className="w-10 h-10 rounded-full hover:bg-white/10 flex items-center justify-center text-white/80 hover:text-white transition-colors"
+              title="About EUS Desktop"
+            >
+              <i className="fas fa-info-circle text-lg"></i>
+            </button>
             <div className="flex items-center gap-3">
               <div className="hidden md:block text-right">
                 <p className="text-sm font-bold text-white">{adminName}</p>
@@ -183,6 +193,8 @@ export default function AdminShell() {
             </div>
           </div>
         </header>
+
+        {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
 
         <main className="flex-1 overflow-auto p-4 lg:p-8">
           <div className="max-w-7xl mx-auto">
