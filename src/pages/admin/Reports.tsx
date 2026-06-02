@@ -28,7 +28,7 @@ type MonthlySheetRow = MemberRow & {
 };
 
 export default function Reports() {
-  const { numeric: settings } = useSettings();
+  const { numeric: settings, version: settingsVersion } = useSettings();
   const [activeTab, setActiveTab] = useState<Tab>('maturity');
 
   const [maturityRows, setMaturityRows] = useState<MaturityRow[]>([]);
@@ -49,7 +49,9 @@ export default function Reports() {
     if (activeTab === 'interest') void loadInterest();
     if (activeTab === 'defaulter') void loadDefaulter();
     if (activeTab === 'monthly_sheet') void loadMonthlySheet();
-  }, [activeTab, startDate, endDate]);
+    // settingsVersion: re-fetch when admin saves ROI / due-day / etc. so
+    // Maturity Report projections and Monthly Sheet status reflect the new values.
+  }, [activeTab, startDate, endDate, settingsVersion]);
 
   const roiCatB = Number(settings['roi_category_b'] ?? 36) || 36;
   const roi24 = Number(settings['roi_category_c_24'] ?? 16) || 16;

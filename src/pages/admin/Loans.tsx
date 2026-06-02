@@ -13,7 +13,7 @@ type EnrichedMember = MemberRow & {
 };
 
 export default function Loans() {
-  const { numeric: settings } = useSettings();
+  const { numeric: settings, version: settingsVersion } = useSettings();
   const eligibilityPct = (Number(settings['loan_eligibility_percent'] ?? 80) || 80) / 100;
 
   const [activeTab, setActiveTab] = useState<'disburse' | 'repay'>('disburse');
@@ -38,9 +38,12 @@ export default function Loans() {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  // settingsVersion: re-fetch members + recompute maxLoan when admin changes
+  // loan_eligibility_percent — the cap is computed from this setting.
   useEffect(() => {
     void fetchData();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsVersion]);
 
   const fetchData = async () => {
     setLoading(true);

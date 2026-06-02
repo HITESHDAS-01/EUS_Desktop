@@ -3,21 +3,26 @@ import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { api } from '@/lib/api';
 import { formatCurrency, safeFormatDate } from '@/lib/utils';
+import { useSettings } from '@/lib/SettingsContext';
 import type { EmiDashboardStats } from '@/types/db';
 
 export default function EmiDashboard() {
   const navigate = useNavigate();
+  const { version: settingsVersion } = useSettings();
   const [stats, setStats] = useState<EmiDashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Re-fetch on settings reload — grace_period_days affects the server-side
+  // overdue scan.
   useEffect(() => {
+    setLoading(true);
     api
       .getEmiDashboardStats()
       .then(setStats)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
-  }, []);
+  }, [settingsVersion]);
 
   if (loading) {
     return (

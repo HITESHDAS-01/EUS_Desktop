@@ -11,18 +11,22 @@ const cardClass =
   'bg-white rounded-3xl p-6 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] hover:shadow-[0_8px_20px_-6px_rgba(6,81,237,0.15)] transition-shadow duration-300 border border-gray-50 relative overflow-hidden group';
 
 export default function AdminHome() {
-  const { brand } = useSettings();
+  const { brand, version: settingsVersion } = useSettings();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
 
+  // Re-fetch on settings reload — Dashboard math (treasury, maturity, etc.)
+  // is computed server-side using ROI/penalty settings, so changing those in
+  // Settings should refresh these cards without a page navigation.
   useEffect(() => {
+    setLoading(true);
     api
       .getDashboardStats()
       .then(setStats)
       .catch((e) => console.error(e))
       .finally(() => setLoading(false));
-  }, []);
+  }, [settingsVersion]);
 
   const handleExport = async () => {
     if (!stats) return;
